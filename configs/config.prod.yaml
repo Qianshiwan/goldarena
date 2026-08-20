@@ -1,0 +1,114 @@
+# ============================================================
+#  金归子 GoldArena — 生产环境配置 (config.prod.yaml)
+#  由 docker-compose.prod.yml 挂载为容器内 /app/configs/config.yaml
+#  敏感项请改用环境变量注入（见 .env.prod.example），不要明文提交
+# ============================================================
+
+server:
+  gateway:
+    port: 8080
+    mode: release          # 生产必须为 release
+
+database:
+  sqlite:
+    path: "data/goldarena.db"   # 容器内 /app/data，compose 已挂持久卷
+  postgres:
+    host: localhost
+    port: 5432
+    user: goldarena
+    password: goldarena_dev
+    dbname: goldarena
+  redis:
+    host: localhost
+    port: 6379
+    password: ""
+    db: 0
+
+jwt:
+  # ⚠️ 必须改成强随机串（≥32 字节），否则 token 可伪造
+  secret: "CHANGE_ME_TO_A_STRONG_RANDOM_SECRET_MIN_32_CHARS"
+  access_expire: 24h
+  refresh_expire: 168h
+
+market:
+  base_price: 4139.0
+  twelvedata:
+    api_key: ""   # 填入 Twelve Data key，或用环境变量 TWELVEDATA_API_KEY 注入
+    base_url: "https://api.twelvedata.com"
+    ws_url: "wss://ws.twelvedata.com/v1/quotes/price"
+  history:
+    enabled: true
+    backfill_minutes: 1440
+  poll_interval: 5s
+  heartbeat: 30s
+  # 0.1 秒级实时更新（高频合成微跳）
+  tick_interval: 100ms
+  simulate_ticks: true
+  tick_volatility: 0.0003
+
+trading:
+  contract_size: 100
+  min_volume: 0.01
+  max_volume: 100
+  volume_step: 0.01
+  tick_size: 0.10
+  tick_value: 10.0
+  max_leverage: 1000
+  default_leverage: 10
+  spread: 0.40
+  margin_call_level: 50
+  stop_out_level: 30
+
+gamecoin:
+  exchange_rate: 10000
+  min_recharge: 10
+  new_user_bonus: 10000
+  verified_bonus: 50000
+
+# ========== 真实支付 ==========
+# provider 选项: wechatpay_v2 / wechatpay / aggregator
+# 注意: 真实微信支付需在 pay.weixin.qq.cn 开通 Native 支付产品，
+#       否则真充值会返回 NOAUTH。上线前需先开通，否则充值回调无法完成。
+payment:
+  provider: "wechatpay_v2"
+  sandbox: false                       # 生产关闭沙箱
+  notify_base_url: "https://YOUR_DOMAIN_HERE"   # ⚠️ 改成你的公网 HTTPS 域名
+  aggregator:
+    gateway: ""
+    pid: ""
+    key: ""
+  wechatpay:
+    mchid: ""   # 或用环境变量 WECHATPAY_MCHID
+    appid: ""   # 或用环境变量 WECHATPAY_APPID
+    v2_key: ""  # 或用环境变量 WECHATPAY_V2_KEY（32位）
+    sub_mchid: ""
+    serial_no: ""
+    private_key_path: "config/wechat_apiclient_key.pem"
+    api_v3_key: ""
+
+# ========== 邮件 ==========
+# 生产必须 dev_print_code=false，否则验证码会回显到 API 响应（泄露！）
+# SMTP 密码优先用环境变量 GOLDARENA_SMTP_PASS 注入（见 .env.prod.example）
+mail:
+  smtp:
+    host: "smtp.qq.com"
+    port: 587
+    username: "820984103@qq.com"
+    password: ""          # 留空，由 GOLDARENA_SMTP_PASS 注入
+    from: "GoldArena <820984103@qq.com>"
+    use_ssl: false
+  dev_print_code: false   # ⚠️ 生产必须为 false
+
+register:
+  require_email: true
+  code_ttl: 5m
+  resend_interval: 60s
+  max_code_attempts: 5
+  ip_send_limit: 20
+  ip_register_limit: 10
+
+# ========== 管理员 ==========
+# ⚠️ 必须改强密码，或部署后用 ADMIN_PASSWORD 环境变量覆盖
+admin:
+  seed_username: "admin"
+  seed_password: "CHANGE_ME_STRONG_ADMIN_PASSWORD"

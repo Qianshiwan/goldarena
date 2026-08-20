@@ -1,0 +1,45 @@
+# 本地数据/数据库
+data/
+*.db
+*.db-shm
+*.db-wal
+
+# 编译产物
+*.exe
+gateway
+gateway_linux_amd64
+goldarena-deploy.zip
+goldarena-src.tar.gz
+goldarena-webdist.tar.gz
+
+# 前端
+web/node_modules/
+web/dist/
+
+# 部署相关（含密钥）
+deploy/
+*.pem
+*.key
+
+# 系统/IDE
+.DS_Store
+.vscode/
+.idea/
+*.log
+
+# Go
+gopath/
+
+# ========== Secrets / credentials — NEVER commit ==========
+# Real local config (holds secrets). The repo ships config.example.yaml instead.
+configs/config.yaml
+# Standalone credential files
+emailkey.txt
+十二数据KEY.txt
+tokenA.json
+jinguizipay.txt
+# Binary / editor backups
+*.bak
+*~
+gateway~
+goldarena.exe~

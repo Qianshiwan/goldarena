@@ -1,0 +1,105 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  background: #0F1923;
+  color: #E5E7EB;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  min-height: 100vh;
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: #1A2733; }
+::-webkit-scrollbar-thumb { background: #374151; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #4B5563; }
+
+/* Gold Gradient Text */
+.gold-gradient {
+  background: linear-gradient(135deg, #F0D060 0%, #D4AF37 50%, #B8960F 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* Trading Card */
+.trade-card {
+  background: #1A2733;
+  border: 1px solid #2D3B4A;
+  border-radius: 8px;
+  transition: border-color 0.2s;
+}
+.trade-card:hover {
+  border-color: #D4AF37;
+}
+
+/* Price Colors */
+.price-up { color: #22C55E; }
+.price-down { color: #EF4444; }
+
+/* Button Styles */
+.btn-gold {
+  background: linear-gradient(135deg, #D4AF37, #B8960F);
+  color: #0F1923;
+  font-weight: 600;
+  padding: 8px 20px;
+  border-radius: 6px;
+  transition: all 0.2s;
+}
+.btn-gold:hover {
+  background: linear-gradient(135deg, #F0D060, #D4AF37);
+  transform: translateY(-1px);
+}
+
+.btn-trade-long {
+  background: #22C55E20;
+  color: #22C55E;
+  border: 1px solid #22C55E40;
+  font-weight: 600;
+  padding: 10px 24px;
+  border-radius: 6px;
+  transition: all 0.2s;
+}
+.btn-trade-long:hover {
+  background: #22C55E;
+  color: #0F1923;
+}
+
+.btn-trade-short {
+  background: #EF444420;
+  color: #EF4444;
+  border: 1px solid #EF444440;
+  font-weight: 600;
+  padding: 10px 24px;
+  border-radius: 6px;
+  transition: all 0.2s;
+}
+.btn-trade-short:hover {
+  background: #EF4444;
+  color: #0F1923;
+}
+
+/* Input Styles */
+input[type="number"],
+input[type="text"],
+input[type="password"],
+input[type="email"],
+select {
+  background: #0F1923;
+  border: 1px solid #2D3B4A;
+  color: #E5E7EB;
+  padding: 8px 12px;
+  border-radius: 6px;
+  outline: none;
+  transition: border-color 0.2s;
+}
+input:focus, select:focus {
+  border-color: #D4AF37;
+}

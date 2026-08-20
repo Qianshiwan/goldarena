@@ -1,0 +1,159 @@
+server:
+  gateway:
+    port: 8080
+    mode: debug
+  user:
+    port: 8081
+  market:
+    port: 8082
+  trade:
+    port: 8083
+  contest:
+    port: 8084
+
+database:
+  postgres:
+    host: localhost
+    port: 5432
+    user: goldarena
+    password: goldarena_dev
+    dbname: goldarena
+    max_open_conns: 20
+    max_idle_conns: 5
+  redis:
+    host: localhost
+    port: 6379
+    password: ""
+    db: 0
+  # Durable fallback store. SQLite is a real ACID SQL database (WAL journaling)
+  # that needs no server process and actually runs in this sandbox, so it is the
+  # default durable backend here. Leave empty to run memory-only (data lost on
+  # restart). PostgreSQL (above) is used instead when a real PG is reachable.
+  sqlite:
+    path: "data/goldarena.db"
+  timescaledb:
+    host: localhost
+    port: 5433
+    user: goldarena
+    password: goldarena_dev
+    dbname: goldarena_ts
+
+jwt:
+  secret: "CHANGE_ME_IN_PRODUCTION_USE_A_LONG_RANDOM_STRING"
+  access_expire: 24h
+  refresh_expire: 168h
+
+market:
+  base_price: 4139.0
+  # Data source priority (auto-fallback):
+  #   1. Sina Finance (hf_GC)     — free, no API key, primary source from China
+  #   2. Yahoo Finance (GC=F)     — free, no API key (blocked from mainland China)
+  #   3. Twelve Data (XAU/USD)    — needs free API key from https://twelvedata.com/pricing
+  #   4. Simulated                — always available, last-resort fallback
+  twelvedata:
+    # Set your free API key here (or use TWELVEDATA_API_KEY env var).
+    # Get one at https://twelvedata.com/pricing (free tier: 800 req/day).
+    api_key: ""  # 填入你的 Twelve Data key，或用环境变量 TWELVEDATA_API_KEY 注入
+    base_url: "https://api.twelvedata.com"
+    ws_url: "wss://ws.twelvedata.com/v1/quotes/price"
+  # Intraday history backfill: on startup (and on each new UTC day) the gateway
+  # downloads XAU/USD 1m history from Twelve Data and seeds the chart, so the
+  # candle view shows a full session immediately and only new bars stream live.
+  # Requires a Twelve Data key (above). Disable by setting enabled: false.
+  history:
+    enabled: true
+    backfill_minutes: 1440  # last 24h of 1m bars (≈ a full XAU/USD session)
+  poll_interval: 5s
+  heartbeat: 30s
+  # 0.1 秒级实时更新（高频合成微跳）：真实行情约 1s 才从新浪刷新一次，
+  # 两次真实刷新之间用「锚定真实价的均值回归随机游走」合成微小波动，
+  # 让行情图/报价条以 10fps 平滑跳动，且始终不偏离真实市价超过 ±0.2%。
+  tick_interval: 100ms      # 合成微跳广播节奏（0.1s = 10 次/秒）
+  simulate_ticks: true      # false 则退回旧版 1s 广播
+  tick_volatility: 0.0003   # 单次微跳最大幅度（占价格比例）
+
+trading:
+  contract_size: 100
+  min_volume: 0.01
+  max_volume: 100
+  volume_step: 0.01
+  tick_size: 0.10
+  tick_value: 10.0
+  max_leverage: 1000
+  default_leverage: 10
+  spread: 0.40
+  margin_call_level: 50
+  stop_out_level: 30
+
+gamecoin:
+  exchange_rate: 10000
+  min_recharge: 10
+  new_user_bonus: 10000
+  verified_bonus: 50000
+
+# ========== Real-money recharge (真实支付) ==========
+# 充值走真实支付：用户下单 → 生成微信/支付宝扫码 → 支付平台异步回调验签 → 游戏币入账。
+#
+# provider 选项:
+#   "wechatpay_v2" — 微信支付 v2 Native 扫码支付（XML+MD5签名，仅需 mchid+appid+v2_key）
+#   "wechatpay"    — 微信支付 v3 Native 扫码支付（JSON+RSA签名+AES解密，需私钥+APIv3密钥）
+#   "aggregator"   — 易支付/码付类聚合网关（无需自有微信商户号）
+#
+# sandbox: true 时跳过真实网关与验签，用本地模拟回调验证充值入账流程。
+#   上线时：sandbox 置 false，按所选 provider 填写凭据，notify_base_url 改成公网 HTTPS 域名。
+#
+# notify_base_url: 异步回调的公网基地址。微信支付要求 HTTPS。
+#   本地开发用 http://localhost:8080（仅沙箱）；上线必须 https://你的域名
+payment:
+  provider: "wechatpay_v2"
+  sandbox: true   # 本地开发默认沙箱；上线接真实支付时置 false 并填下方凭据
+  notify_base_url: "http://localhost:8080"   # 上线改公网 HTTPS 域名
+  aggregator:
+    gateway: ""   # 聚合支付提交地址，如 https://pay.example.com/submit.php
+    pid: ""       # 商户ID
+    key: ""       # 商户密钥（用于签名/验签）
+  # 微信支付配置（v2 和 v3 共用此段）
+  # ⚠️ 以下为敏感凭据，请勿提交真实值到 git。可用环境变量注入：
+  #   WECHATPAY_MCHID / WECHATPAY_APPID / WECHATPAY_V2_KEY / WECHATPAY_SUB_MCHID
+  wechatpay:
+    mchid: ""              # 商户号（或环境变量 WECHATPAY_MCHID）
+    appid: ""              # AppID（或环境变量 WECHATPAY_APPID）
+    v2_key: ""             # APIv2 密钥 (32位)（或环境变量 WECHATPAY_V2_KEY）
+    sub_mchid: ""          # 服务商模式下的子商户号（直连模式留空）
+    # --- v3 专用（v2 不需要以下字段）---
+    serial_no: ""          # 商户API证书序列号
+    private_key_path: "config/wechat_apiclient_key.pem"
+    api_v3_key: ""         # APIv3密钥（或环境变量 WECHATPAY_API_V3_KEY）
+
+# ========== Email verification & anti-bot registration ==========
+# Registration now requires an email verification code, which stops bots from
+# mass-creating accounts. Configure a real SMTP server in production; without it
+# the gateway runs in "dev" mode (logs the code and echoes dev_code in the
+# send-code response for local testing). Set mail.dev_print_code=false in prod.
+mail:
+  smtp:
+    host: "smtp.qq.com"
+    port: 587
+    username: "820984103@qq.com"
+    # 不要在此写入真实授权码！用环境变量注入避免明文入库：
+    #   GOLDARENA_SMTP_PASS=你的QQ邮箱授权码 ./gateway.exe
+    # 任何新启动的 gateway 进程都会自动继承。切勿把真实授权码提交到 git。
+    password: ""   # 留空，运行时由环境变量 GOLDARENA_SMTP_PASS 注入
+    from: "GoldArena <820984103@qq.com>"
+    use_ssl: false    # true for implicit TLS (port 465), false for STARTTLS (587/25)
+  dev_print_code: true    # dev only — returns code in API response for local testing; set false in production
+
+register:
+  require_email: true
+  code_ttl: 5m            # verification code validity
+  resend_interval: 60s    # min seconds between two codes to the same email
+  max_code_attempts: 5    # wrong attempts before the code is invalidated
+  ip_send_limit: 20       # max send-code requests per IP per hour
+  ip_register_limit: 10   # max successful registrations per IP per hour
+
+# ========== Admin console (平台管理后台) ==========
+# 首次启动时若库内不存在 role=admin 的账号，则用以下凭据自动播种一个默认管理员，
+# 并通过 SQLite 持久化（重启不丢）。生产环境务必修改密码，或删除该账号改用你自建的管理员。
+admin:
+  seed_username: "admin"
+  seed_password: ""   # 留空则使用默认 Admin@8888；生产环境请用环境变量 ADMIN_PASSWORD 覆盖并尽快修改

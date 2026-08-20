@@ -1,0 +1,54 @@
+# ============================================================
+#  金归子 GoldArena — 生产环境 Docker Compose
+#  用法: docker compose -f docker-compose.prod.yml up -d --build
+#
+#  前置:
+#   1. 把 SSL 证书放到 ./ssl/fullchain.pem 和 ./ssl/privkey.pem
+#   2. 编辑 configs/config.prod.yaml 填入 jwt.secret / 域名 / 管理员密码
+#   3. 导出环境变量: GOLDARENA_SMTP_PASS / ADMIN_PASSWORD (见 .env.prod.example)
+#   4. 域名 DNS A 记录指向本机公网 IP，且 80/443 已放通安全组
+#
+#  数据持久化: ./data 挂到容器 /app/data (SQLite 主库 + K线 + 快照)
+#  无需 Postgres/Redis：应用自动降级为 SQLite + 内存模式（已耐久）
+# ============================================================
+
+services:
+  gateway:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    image: goldarena/gateway:prod
+    container_name: goldarena-gateway
+    environment:
+      - GIN_MODE=release
+      - GOLDARENA_SMTP_PASS=${GOLDARENA_SMTP_PASS}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD}
+    volumes:
+      - ./configs/config.prod.yaml:/app/configs/config.yaml:ro
+      - ./data:/app/data
+    expose:
+      - "8080"          # 仅内网，不对外暴露
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:8080/api/v1/cultivation/progress || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  web:
+    build:
+      context: ./web
+      dockerfile: ../docker/Dockerfile.web
+    image: goldarena/web:prod
+    container_name: goldarena-web
+    depends_on:
+      - gateway
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      # 用生产 nginx 配置（HTTPS + WebSocket）覆盖镜像内置的明文配置
+      - ./docker/nginx.prod.conf:/etc/nginx/conf.d/default.conf:ro
+      # SSL 证书目录
+      - ./ssl:/etc/nginx/ssl:ro
+    restart: unless-stopped

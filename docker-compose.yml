@@ -1,0 +1,74 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: goldarena-pg
+    environment:
+      POSTGRES_USER: goldarena
+      POSTGRES_PASSWORD: goldarena_dev
+      POSTGRES_DB: goldarena
+    ports:
+      - "5432:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+      - ./data/init:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U goldarena"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: goldarena-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Gateway (Go backend)
+  gateway:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    container_name: goldarena-gateway
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      - GIN_MODE=release
+    volumes:
+      - ./configs:/app/configs
+      # 持久化 SQLite 主库 + K线历史 + 内存快照，否则容器重建会丢失全部用户数据
+      - ./data:/app/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:8080/api/v1/cultivation/progress || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # Web (React frontend)
+  web:
+    build:
+      context: ./web
+      dockerfile: ../docker/Dockerfile.web
+    container_name: goldarena-web
+    ports:
+      - "3000:3000"
+    depends_on:
+      - gateway
+
+volumes:
+  pg_data:
+  redis_data:
