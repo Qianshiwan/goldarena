@@ -50,7 +50,7 @@ func (c *Client) WritePump() {
 type wsMsg struct {
 	Action  string `json:"action"`  // subscribe | unsubscribe | ping
 	Channel string `json:"channel"` // quote | kline
-	Symbol  string `json:"symbol"`  // GC
+	Symbol  string `json:"symbol"`  // e.g. XAU
 	Period  string `json:"period"`  // 1m, 5m, 1h, 1d
 }
 

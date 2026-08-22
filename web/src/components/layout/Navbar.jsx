@@ -11,7 +11,7 @@ export default function Navbar() {
         {/* Logo */}
         <Link to="/" className="flex items-center gap-2 text-lg font-bold">
           <span className="text-2xl">🥇</span>
-          <span className="gold-gradient">金龟子</span>
+          <span className="gold-gradient">金归子</span>
           <span className="text-xs text-gray-500 font-normal ml-1">GoldArena</span>
         </Link>
 

@@ -42,7 +42,7 @@ export default function DashboardPage() {
             欢迎回来，{user?.nickname || '交易者'}
           </h1>
           <p className="text-gray-400 mt-2">
-            金龟子 GoldArena · 伦敦金龟子现货模拟交易游戏
+            金归子 GoldArena · 伦敦金归子现货模拟交易游戏
           </p>
         </div>
         {cultivation && cultivation.current_level && (

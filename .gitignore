@@ -4,9 +4,9 @@ data/
 *.db-shm
 *.db-wal
 
-# 编译产物
+# 编译产物（注意：/gateway 锚定仓库根，只忽略编译出的二进制，不要误伤 cmd/gateway 源码目录）
 *.exe
-gateway
+/gateway
 gateway_linux_amd64
 goldarena-deploy.zip
 goldarena-src.tar.gz
@@ -27,8 +27,12 @@ deploy/
 .idea/
 *.log
 
+# WorkBuddy 项目数据（非项目源码，勿提交）
+.workbuddy/
+
 # Go
 gopath/
+build/
 
 # ========== Secrets / credentials — NEVER commit ==========
 # Real local config (holds secrets). The repo ships config.example.yaml instead.

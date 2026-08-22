@@ -46,8 +46,8 @@ jwt:
 market:
   base_price: 4139.0
   # Data source priority (auto-fallback):
-  #   1. Sina Finance (hf_GC)     — free, no API key, primary source from China
-  #   2. Yahoo Finance (GC=F)     — free, no API key (blocked from mainland China)
+  #   1. Sina Finance (hf_XAU)    — free, no API key, primary source from China
+  #   2. Yahoo Finance (XAUUSD=X) — free, no API key (blocked from mainland China)
   #   3. Twelve Data (XAU/USD)    — needs free API key from https://twelvedata.com/pricing
   #   4. Simulated                — always available, last-resort fallback
   twelvedata:
@@ -77,8 +77,8 @@ trading:
   min_volume: 0.01
   max_volume: 100
   volume_step: 0.01
-  tick_size: 0.10
-  tick_value: 10.0
+  tick_size: 0.01
+  tick_value: 1.0
   max_leverage: 1000
   default_leverage: 10
   spread: 0.40

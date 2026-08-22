@@ -51,14 +51,14 @@ func (s *Sender) configured() bool {
 // logs the code and may return it as devCode for UI display. err is non-nil
 // only when a configured SMTP server actually fails to send.
 func (s *Sender) SendCode(to, code string) (string, error) {
-	subject := "金龟子现货模拟交易 - 邮箱验证码"
+	subject := "金归子现货模拟交易 - 邮箱验证码"
 	body := fmt.Sprintf(
-		"您好，\n\n您正在注册金龟子现货模拟交易游戏平台，邮箱验证码为：%s\n该验证码 5 分钟内有效，请勿转发给他人。\n\n若非本人操作，请忽略本邮件。",
+		"您好，\n\n您正在注册金归子现货模拟交易游戏平台，邮箱验证码为：%s\n该验证码 5 分钟内有效，请勿转发给他人。\n\n若非本人操作，请忽略本邮件。",
 		code,
 	)
 	html := fmt.Sprintf(`<div style="font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;max-width:480px;margin:0 auto;padding:24px;background:#0f1115;color:#e8e8e8;border-radius:12px">
-  <h2 style="color:#e6b800;margin:0 0 12px">金龟子现货模拟交易游戏平台</h2>
-  <p>您好，您正在注册金龟子现货模拟交易游戏平台。</p>
+  <h2 style="color:#e6b800;margin:0 0 12px">金归子现货模拟交易游戏平台</h2>
+  <p>您好，您正在注册金归子现货模拟交易游戏平台。</p>
   <p>您的邮箱验证码为：</p>
   <div style="font-size:32px;letter-spacing:8px;font-weight:700;color:#e6b800;margin:12px 0">%s</div>
   <p style="color:#9aa0a6;font-size:13px">该验证码 5 分钟内有效，请勿转发给他人。若非本人操作，请忽略本邮件。</p>
@@ -68,14 +68,14 @@ func (s *Sender) SendCode(to, code string) (string, error) {
 
 // SendResetCode delivers a password-reset verification code to `to`.
 func (s *Sender) SendResetCode(to, code string) (string, error) {
-	subject := "金龟子现货模拟交易 - 重置密码验证码"
+	subject := "金归子现货模拟交易 - 重置密码验证码"
 	body := fmt.Sprintf(
-		"您好，\n\n您正在重置金龟子现货模拟交易游戏平台的登录密码，验证码为：%s\n该验证码 5 分钟内有效，请勿转发给他人。\n\n若非本人操作，请尽快修改密码或联系客服。",
+		"您好，\n\n您正在重置金归子现货模拟交易游戏平台的登录密码，验证码为：%s\n该验证码 5 分钟内有效，请勿转发给他人。\n\n若非本人操作，请尽快修改密码或联系客服。",
 		code,
 	)
 	html := fmt.Sprintf(`<div style="font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;max-width:480px;margin:0 auto;padding:24px;background:#0f1115;color:#e8e8e8;border-radius:12px">
-  <h2 style="color:#e6b800;margin:0 0 12px">金龟子现货模拟交易游戏平台</h2>
-  <p>您好，您正在重置金龟子现货模拟交易游戏平台的登录密码。</p>
+  <h2 style="color:#e6b800;margin:0 0 12px">金归子现货模拟交易游戏平台</h2>
+  <p>您好，您正在重置金归子现货模拟交易游戏平台的登录密码。</p>
   <p>您的重置验证码为：</p>
   <div style="font-size:32px;letter-spacing:8px;font-weight:700;color:#e6b800;margin:12px 0">%s</div>
   <p style="color:#9aa0a6;font-size:13px">该验证码 5 分钟内有效，请勿转发给他人。若非本人操作，请尽快修改密码或联系客服。</p>

@@ -31,8 +31,8 @@ export default function LoginPage() {
       <div className="trade-card p-8 w-full max-w-md">
         <div className="text-center mb-6">
           <span className="text-4xl">🥇</span>
-          <h1 className="text-xl font-bold gold-gradient mt-2">金龟子 GoldArena</h1>
-          <p className="text-gray-500 text-sm mt-1">金龟子现货模拟交易游戏平台</p>
+          <h1 className="text-xl font-bold gold-gradient mt-2">金归子 GoldArena</h1>
+          <p className="text-gray-500 text-sm mt-1">金归子现货模拟交易游戏平台</p>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
