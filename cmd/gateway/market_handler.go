@@ -34,6 +34,12 @@ const quoteCacheDuration = 800 * time.Millisecond
 // XAU essentially never moves >3% within one 2s poll; real glitches do.
 const badTickMaxDeviation = 0.03
 
+// twelveDataCooldown throttles Twelve Data probes. The free tier allows only
+// ~800 credits/day, so we probe at most once per minute and let the synthetic
+// ticks cover the gaps between probes — otherwise 1s polling burns the daily
+// quota in ~13 minutes and the feed dies for the rest of the day.
+const twelveDataCooldown = 60 * time.Second
+
 type MarketService struct {
 	rdb          *redis.Redis
 	hub          *ws.Hub
@@ -51,7 +57,15 @@ type MarketService struct {
 	// lastValidPrice: most recent price accepted as sane, used to reject
 	// bad ticks (transient exchange glitches / fallback to fake prices).
 	lastValidPrice map[string]float64
+	// lastValidIsReal marks whether lastValidPrice came from a real source.
+	// When false (simulated fallback), the next real quote re-anchors
+	// unconditionally instead of being rejected by the bad-tick filter.
+	lastValidIsReal map[string]bool
 	lastValidMu     sync.Mutex
+
+	// twelveDataTriedAt throttles Twelve Data probes (free-tier credit limit).
+	twelveCooldownMu   sync.Mutex
+	twelveDataTriedAt  map[string]time.Time
 
 	// Price tick history for real K-line generation
 	priceHistory   []priceTick
@@ -100,6 +114,8 @@ func NewMarketService(rdb *redis.Redis, hub *ws.Hub, basePrice float64) *MarketS
 		cachedQuote:     make(map[string]*common.Quote),
 		cachedQuoteAt:   make(map[string]time.Time),
 		lastValidPrice:  make(map[string]float64),
+		lastValidIsReal: make(map[string]bool),
+		twelveDataTriedAt: make(map[string]time.Time),
 		priceHistory:    make([]priceTick, 0, 5000),
 		klineHistory:    make(map[string][]common.KLine),
 		currentCandle:   make(map[string]*common.KLine),
@@ -406,9 +422,18 @@ func (s *MarketService) syntheticTick() {
 		// anchor = last real accepted price (set by acceptPrice on every poll)
 		s.lastValidMu.Lock()
 		anchor := s.lastValidPrice[symbol]
+		if anchor <= 0 && s.simulateTicks {
+			// No real quote yet (cold start / source outage). Seed the anchor
+			// from the best available reference so the chart keeps ticking.
+			anchor = s.seedAnchor(symbol)
+			if anchor > 0 {
+				s.lastValidPrice[symbol] = anchor
+				s.lastValidIsReal[symbol] = false
+			}
+		}
 		s.lastValidMu.Unlock()
 		if anchor <= 0 {
-			continue // no real price yet — wait for the first poll
+			continue // simulation disabled and no real price yet — wait for a poll
 		}
 
 		s.quoteCacheMu.Lock()
@@ -645,16 +670,55 @@ func (s *MarketService) fetchQuote(symbol, contractMonth string) *common.Quote {
 	}
 	log.Printf("[quote] Sina Finance failed/unstable for %s, trying Twelve Data...", symbol)
 
-	// Source 2: Twelve Data
-	if q, err := s.fetchFromTwelveData(symbol); err == nil && q != nil && s.acceptPrice(symbol, q.Price) {
-		log.Printf("[quote] Twelve Data fallback: %s=%.2f", symbol, q.Price)
-		s.cacheQuote(symbol, q)
-		return q
+	// Source 2: Twelve Data (throttled — free tier is ~800 credits/day, so we
+	// only probe at most once per minute; the simulation below covers the gaps).
+	s.twelveCooldownMu.Lock()
+	probe := time.Since(s.twelveDataTriedAt[symbol]) >= twelveDataCooldown
+	if probe {
+		s.twelveDataTriedAt[symbol] = time.Now()
+	}
+	s.twelveCooldownMu.Unlock()
+	if probe {
+		if q, err := s.fetchFromTwelveData(symbol); err == nil && q != nil && s.acceptPrice(symbol, q.Price) {
+			log.Printf("[quote] Twelve Data fallback: %s=%.2f", symbol, q.Price)
+			s.cacheQuote(symbol, q)
+			return q
+		}
+	} else {
+		log.Printf("[quote] %s Twelve Data in cooldown (simulation covers feed)", symbol)
 	}
 
-	// Source 3: NO simulated fallback. Injecting fake (~basePrice) prices into
-	// the live feed corrupts candles with phantom wicks. Instead, hold the last
-	// known *real* quote (stale but real) so the chart freezes rather than lies.
+	// Source 3: Simulated fallback. For a 24/7 simulation game we must never
+	// show a dead feed — when both real sources are down and simulate_ticks is
+	// enabled, anchor to the last known price and let synthetic ticks run.
+	if s.simulateTicks {
+		if q, ok := s.cachedQuote[symbol]; ok && q != nil && q.Price > 0 {
+			return q
+		}
+		seed := s.seedAnchor(symbol)
+		if seed > 0 {
+			sim := &common.Quote{
+				Symbol:         symbol,
+				ContractMonth:  "SPOT",
+				Price:          seed,
+				Bid:            seed - 0.05,
+				Ask:            seed + 0.05,
+				Open:           seed,
+				High:           seed,
+				Low:            seed,
+				PreviousSettle: seed,
+				Volume:         0,
+				OpenInterest:   450000,
+				Timestamp:      time.Now().UnixMilli(),
+			}
+			s.cacheQuote(symbol, sim)
+			log.Printf("[quote] %s sources down — simulated fallback @ %.2f", symbol, seed)
+			return sim
+		}
+	}
+
+	// Source 4: No simulation configured — hold the last known real quote
+	// (stale but real) so the chart freezes rather than lies.
 	if q, ok := s.cachedQuote[symbol]; ok && q != nil && q.Price > 0 {
 		log.Printf("[quote] %s sources unavailable — holding last real quote %.2f", symbol, q.Price)
 		return q
@@ -674,7 +738,10 @@ func (s *MarketService) acceptPrice(symbol string, price float64) bool {
 	s.lastValidMu.Lock()
 	defer s.lastValidMu.Unlock()
 	last := s.lastValidPrice[symbol]
-	if last > 0 {
+	// If the current anchor is a simulated fallback (not a real quote), accept
+	// the first real price unconditionally so we re-anchor to the live market
+	// instead of being rejected by the bad-tick deviation filter.
+	if last > 0 && s.lastValidIsReal[symbol] {
 		dev := math.Abs(price-last) / last
 		if dev > badTickMaxDeviation {
 			log.Printf("[quote] rejected bad tick for %s: %.2f (last sane %.2f, dev %.2f%%)",
@@ -683,6 +750,7 @@ func (s *MarketService) acceptPrice(symbol string, price float64) bool {
 		}
 	}
 	s.lastValidPrice[symbol] = price
+	s.lastValidIsReal[symbol] = true
 	return true
 }
 
@@ -691,6 +759,29 @@ func (s *MarketService) cacheQuote(symbol string, q *common.Quote) {
 	s.cachedQuote[symbol] = q
 	s.cachedQuoteAt[symbol] = time.Now()
 	s.quoteCacheMu.Unlock()
+}
+
+// seedAnchor returns the best available reference price to anchor synthetic
+// ticks when no live quote is reachable. Priority: cached quote > last known
+// K-line close (most recent real close) > configured base price.
+func (s *MarketService) seedAnchor(symbol string) float64 {
+	s.quoteCacheMu.Lock()
+	if q, ok := s.cachedQuote[symbol]; ok && q != nil && q.Price > 0 {
+		s.quoteCacheMu.Unlock()
+		return q.Price
+	}
+	s.quoteCacheMu.Unlock()
+
+	s.klineHistoryMu.Lock()
+	if hist, ok := s.klineHistory[symbol+":SPOT:1m"]; ok && len(hist) > 0 {
+		if last := hist[len(hist)-1].Close; last > 0 {
+			s.klineHistoryMu.Unlock()
+			return last
+		}
+	}
+	s.klineHistoryMu.Unlock()
+
+	return s.basePrice
 }
 
 // ========== Sina Finance Integration (Primary) ==========
