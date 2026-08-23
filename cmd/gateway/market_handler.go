@@ -981,6 +981,7 @@ type TwelveDataQuote struct {
 	Low           float64 `json:"low,string"`
 	Open          float64 `json:"open,string"`
 	PreviousClose float64 `json:"previous_close,string"`
+	Close         float64 `json:"close,string"`
 	Timestamp     int64   `json:"timestamp"`
 	Volume        int64   `json:"volume,string"`
 }
@@ -1044,9 +1045,20 @@ func (s *MarketService) fetchFromTwelveData(symbol string) (*common.Quote, error
 		return nil, fmt.Errorf("twelvedata parse: %w", err)
 	}
 
+	// Twelve Data /quote returns "close" (not "price"); use it as the price.
+	price := td.Price
+	if price == 0 {
+		price = td.Close
+	}
 	// Validate: real quotes always have non-zero price
-	if td.Price == 0 {
+	if price == 0 {
 		return nil, fmt.Errorf("twelvedata returned zero price")
+	}
+	// Forex quotes often omit bid/ask — derive a tiny spread so the order
+	// ticket isn't shown with a zero spread.
+	if td.Bid == 0 || td.Ask == 0 {
+		td.Bid = price - 0.05
+		td.Ask = price + 0.05
 	}
 
 	now := time.Now()
@@ -1055,7 +1067,7 @@ func (s *MarketService) fetchFromTwelveData(symbol string) (*common.Quote, error
 		ContractMonth:  "SPOT",
 		Bid:            td.Bid,
 		Ask:            td.Ask,
-		Price:          td.Price,
+		Price:          price,
 		Open:           td.Open,
 		High:           td.High,
 		Low:            td.Low,
