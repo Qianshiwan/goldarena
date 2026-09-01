@@ -92,6 +92,23 @@ func migrateSQLite(db *sql.DB) error {
 			id INTEGER, user_id INTEGER, channel TEXT, amount_rmb REAL, game_coins REAL,
 			status TEXT, provider TEXT, qr_content TEXT, pay_url TEXT, created_at TEXT, paid_at TEXT
 		)`,
+		// 金龟子模拟币钱包（与 ga_wallets 完全隔离，独立表）
+		`CREATE TABLE IF NOT EXISTS ga_jinguizi_wallets (
+			user_id INTEGER PRIMARY KEY,
+			id INTEGER, balance REAL, frozen REAL, total_recharged REAL,
+			version INTEGER, created_at TEXT, updated_at TEXT
+		)`,
+		`CREATE TABLE IF NOT EXISTS ga_jinguizi_txns (
+			id INTEGER PRIMARY KEY,
+			user_id INTEGER, operator_id INTEGER, type TEXT, amount REAL,
+			balance_before REAL, balance_after REAL, remark TEXT, created_at TEXT
+		)`,
+		// 金龟子选拔赛报名记录（与钱包平行，独立表）
+		`CREATE TABLE IF NOT EXISTS ga_jinguizi_enrollments (
+			user_id INTEGER PRIMARY KEY,
+			tier TEXT, initial_capital REAL, status TEXT,
+			contest_id INTEGER, enrolled_at TEXT, settled_at TEXT, remark TEXT
+		)`,
 	}
 	for _, s := range stmts {
 		if _, err := db.Exec(s); err != nil {
@@ -244,6 +261,79 @@ func (m *MemoryStore) persistWalletTxn(t *WalletTransaction) {
 		t.ID, t.UserID, t.Type, t.Amount, t.BalanceBefore, t.BalanceAfter, t.ReferenceID, t.Remark, fmtTime(t.CreatedAt))
 	if err != nil {
 		log.Printf("WARN persistWalletTxn(%d): %v", t.ID, err)
+	}
+}
+
+// ---------- 金龟子 (Jinguizi) simulated coin wallet persistence ----------
+
+func (m *MemoryStore) persistJinguiziWallet(userID int64) {
+	if m.db == nil {
+		return
+	}
+	m.mu.RLock()
+	w := m.jinguiziWallets[userID]
+	m.mu.RUnlock()
+	if w == nil {
+		return
+	}
+	m.dbMu.Lock()
+	defer m.dbMu.Unlock()
+	_, err := m.db.Exec(`INSERT INTO ga_jinguizi_wallets
+		(user_id,id,balance,frozen,total_recharged,version,created_at,updated_at)
+		VALUES (?,?,?,?,?,?,?,?)
+		ON CONFLICT(user_id) DO UPDATE SET
+		id=excluded.id,balance=excluded.balance,frozen=excluded.frozen,
+		total_recharged=excluded.total_recharged,version=excluded.version,updated_at=excluded.updated_at`,
+		w.UserID, w.ID, w.Balance, w.Frozen, w.TotalRecharged, w.Version,
+		fmtTime(w.CreatedAt), fmtTime(w.UpdatedAt))
+	if err != nil {
+		log.Printf("WARN persistJinguiziWallet(%d): %v", userID, err)
+	}
+}
+
+func (m *MemoryStore) persistJinguiziTxn(t *JinguiziTransaction) {
+	if m.db == nil || t == nil {
+		return
+	}
+	m.dbMu.Lock()
+	defer m.dbMu.Unlock()
+	_, err := m.db.Exec(`INSERT INTO ga_jinguizi_txns
+		(id,user_id,operator_id,type,amount,balance_before,balance_after,remark,created_at)
+		VALUES (?,?,?,?,?,?,?,?,?)
+		ON CONFLICT(id) DO UPDATE SET
+		user_id=excluded.user_id,operator_id=excluded.operator_id,type=excluded.type,amount=excluded.amount,
+		balance_before=excluded.balance_before,balance_after=excluded.balance_after,remark=excluded.remark,created_at=excluded.created_at`,
+		t.ID, t.UserID, t.OperatorID, t.Type, t.Amount, t.BalanceBefore, t.BalanceAfter, t.Remark, fmtTime(t.CreatedAt))
+	if err != nil {
+		log.Printf("WARN persistJinguiziTxn(%d): %v", t.ID, err)
+	}
+}
+
+func (m *MemoryStore) persistJinguiziEnrollment(userID int64) {
+	if m.db == nil {
+		return
+	}
+	m.mu.RLock()
+	e := m.jinguiziEnrollments[userID]
+	m.mu.RUnlock()
+	if e == nil {
+		return
+	}
+	m.dbMu.Lock()
+	defer m.dbMu.Unlock()
+	settled := ""
+	if e.SettledAt != nil {
+		settled = fmtTime(*e.SettledAt)
+	}
+	_, err := m.db.Exec(`INSERT INTO ga_jinguizi_enrollments
+		(user_id,tier,initial_capital,status,contest_id,enrolled_at,settled_at,remark)
+		VALUES (?,?,?,?,?,?,?,?)
+		ON CONFLICT(user_id) DO UPDATE SET
+		tier=excluded.tier,initial_capital=excluded.initial_capital,status=excluded.status,
+		contest_id=excluded.contest_id,settled_at=excluded.settled_at,remark=excluded.remark`,
+		e.UserID, e.Tier, e.InitialCapital, e.Status, e.ContestID, fmtTime(e.EnrolledAt), settled, e.Remark)
+	if err != nil {
+		log.Printf("WARN persistJinguiziEnrollment(%d): %v", userID, err)
 	}
 }
 
@@ -599,6 +689,67 @@ func (m *MemoryStore) LoadFromSQLite() (int, error) {
 			}
 		}
 		poRows.Close()
+	}
+
+	// 金龟子 (Jinguizi) wallets
+	jiRows, err := m.db.Query(`SELECT user_id,id,balance,frozen,total_recharged,version,created_at,updated_at FROM ga_jinguizi_wallets`)
+	if err == nil {
+		for jiRows.Next() {
+			var w JinguiziWallet
+			var createdAt, updatedAt string
+			if err := jiRows.Scan(&w.UserID, &w.ID, &w.Balance, &w.Frozen, &w.TotalRecharged, &w.Version, &createdAt, &updatedAt); err != nil {
+				jiRows.Close()
+				return 0, err
+			}
+			w.CreatedAt = parseTime(createdAt)
+			w.UpdatedAt = parseTime(updatedAt)
+			m.jinguiziWallets[w.UserID] = &w
+		}
+		jiRows.Close()
+	}
+
+	// 金龟子 (Jinguizi) transactions
+	txRows, err := m.db.Query(`SELECT id,user_id,operator_id,type,amount,balance_before,balance_after,remark,created_at FROM ga_jinguizi_txns`)
+	if err == nil {
+		var maxJi int64
+		for txRows.Next() {
+			var t JinguiziTransaction
+			var createdAt string
+			if err := txRows.Scan(&t.ID, &t.UserID, &t.OperatorID, &t.Type, &t.Amount, &t.BalanceBefore, &t.BalanceAfter, &t.Remark, &createdAt); err != nil {
+				txRows.Close()
+				return 0, err
+			}
+			t.CreatedAt = parseTime(createdAt)
+			m.jinguiziTxns[t.UserID] = append(m.jinguiziTxns[t.UserID], t)
+			if t.ID > maxJi {
+				maxJi = t.ID
+			}
+		}
+		txRows.Close()
+		m.jinguiziSeq.Store(maxJi)
+	}
+
+	// 金龟子选拔赛报名记录
+	enrRows, err := m.db.Query(`SELECT user_id,tier,initial_capital,status,contest_id,enrolled_at,settled_at,remark FROM ga_jinguizi_enrollments`)
+	if err == nil {
+		for enrRows.Next() {
+			var e JinguiziEnrollment
+			var enrolledAt, settledAt, remark string
+			var contestID int64
+			if err := enrRows.Scan(&e.UserID, &e.Tier, &e.InitialCapital, &e.Status, &contestID, &enrolledAt, &settledAt, &remark); err != nil {
+				enrRows.Close()
+				return 0, err
+			}
+			e.ContestID = contestID
+			e.EnrolledAt = parseTime(enrolledAt)
+			if settledAt != "" {
+				t := parseTime(settledAt)
+				e.SettledAt = &t
+			}
+			e.Remark = remark
+			m.jinguiziEnrollments[e.UserID] = &e
+		}
+		enrRows.Close()
 	}
 
 	// Meta sequences

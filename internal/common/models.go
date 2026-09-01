@@ -164,3 +164,56 @@ type ContestRank struct {
 	WinRate    float64 `json:"win_rate"`
 	TradeCount int     `json:"trade_count"`
 }
+
+// ========== Jinguizi (金龟子) Simulated Coin Wallet ==========
+// A wallet SEPARATE from the main game-coin Wallet. It holds "金龟子模拟币", the
+// dedicated contest currency (选拔赛参赛资金). It is deliberately isolated:
+//   - stored in its own tables / maps (ga_jinguizi_wallets, ga_jinguizi_txns)
+//   - recharged ONLY by admins (no real-money payment path involved)
+//   - never mixed with the main wallet used for normal trading margin
+//
+// This keeps contest funds auditable and independent from general game coins.
+type JinguiziWallet struct {
+	UserID         int64     `json:"user_id"`
+	ID             int64     `json:"id"`
+	Balance        float64   `json:"balance"`         // available 金龟子模拟币
+	Frozen         float64   `json:"frozen"`          // frozen as contest margin (reserved for future contest wiring)
+	TotalRecharged float64   `json:"total_recharged"` // cumulative admin recharge
+	Version        int64     `json:"-"`               // optimistic lock
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
+}
+
+// JinguiziEnrollment records a participant's 选拔赛 (contest) entry funded by
+// 金龟子模拟币. It is the contest-lifecycle half of the isolated 金龟子 system:
+// the wallet (above) holds the coins; this record tracks which tier the
+// participant entered, their dedicated contest capital, and the settlement
+// outcome. One active enrollment per user (user_id is the primary key).
+type JinguiziEnrollment struct {
+	UserID         int64      `json:"user_id"`
+	Tier           string     `json:"tier"`            // small / medium / large
+	InitialCapital float64    `json:"initial_capital"` // 金龟子模拟币 granted at enrollment
+	Status         string     `json:"status"`          // active / settled / eliminated
+	ContestID      int64      `json:"contest_id"`      // optional link to a Contest
+	EnrolledAt     time.Time  `json:"enrolled_at"`
+	SettledAt      *time.Time `json:"settled_at,omitempty"`
+	Remark         string     `json:"remark,omitempty"`
+}
+
+// JinguiziTransaction records every change to a 金龟子 wallet.
+//   - admin_recharge : admin grants coins to a participant
+//   - admin_deduct   : admin removes coins (penalty / entry fee / correction)
+//   - contest_entry  : coins granted as contest enrollment capital
+//   - contest_reward : awarded for contest performance (settlement)
+//   - settlement     : end-of-contest settlement (e.g. eliminated → capital reclaimed)
+type JinguiziTransaction struct {
+	ID            int64     `json:"id"`
+	UserID        int64     `json:"user_id"`
+	OperatorID    int64     `json:"operator_id"` // admin who acted; 0 = system
+	Type          string    `json:"type"`
+	Amount        float64   `json:"amount"` // signed
+	BalanceBefore float64   `json:"balance_before"`
+	BalanceAfter  float64   `json:"balance_after"`
+	Remark        string    `json:"remark,omitempty"`
+	CreatedAt     time.Time `json:"created_at"`
+}

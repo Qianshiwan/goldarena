@@ -156,6 +156,7 @@ func main() {
 	tradeSvc := NewTradeService(pg, rdb, memStore, marketSvc)
 	marketSvc.tradeSvc = tradeSvc // back-ref for tick-level order matching
 	cultivationSvc := NewCultivationService(pg, rdb, memStore)
+	jinguiziSvc := NewJinguiziService(memStore)
 
 	// Admin console (management backend). Seed a default admin on first boot.
 	adminSvc := NewAdminService(pg, memStore, jwtMgr, marketSvc, tradeSvc)
@@ -275,6 +276,8 @@ func main() {
 			market.GET("/quote", marketSvc.GetQuote)
 			market.GET("/klines", marketSvc.GetKLines)
 			market.GET("/symbols", marketSvc.GetSymbols)
+			// Token-protected external push (MT4 / local broker bridge).
+			market.POST("/push", marketSvc.PushQuote)
 		}
 
 		// Payment (public): QR image generator + provider async callback (no auth)
@@ -317,6 +320,15 @@ func main() {
 
 		// WebSocket (trading data feed)
 		authed.GET("/ws", marketSvc.WebSocketHandler)
+
+		// 金龟子模拟币钱包（与现有游戏币钱包隔离）
+		jz := api.Group("/jinguizi")
+		jz.Use(userSvc.AuthMiddleware())
+		{
+			jz.GET("/wallet", jinguiziSvc.GetWallet)
+			jz.GET("/transactions", jinguiziSvc.GetTransactions)
+			jz.GET("/enrollment", jinguiziSvc.GetEnrollment)
+		}
 	}
 
 	// ==========================================
@@ -335,6 +347,13 @@ func main() {
 		admin.GET("/orders", adminSvc.ListOrders)
 		admin.GET("/payments", adminSvc.ListPayments)
 		admin.POST("/payments/:no/credit", adminSvc.CreditPayment)
+
+		// 金龟子模拟币钱包管理（与现有充值/钱包逻辑完全隔离）
+		admin.GET("/jinguizi/list", jinguiziSvc.AdminList)
+		admin.POST("/jinguizi/recharge", jinguiziSvc.AdminRecharge)
+		admin.POST("/jinguizi/adjust", jinguiziSvc.AdminAdjust)
+		admin.POST("/jinguizi/enroll", jinguiziSvc.AdminEnroll)
+		admin.POST("/jinguizi/settle", jinguiziSvc.AdminSettle)
 	}
 
 	// Serve the built SPA (web/dist) so the whole app is reachable from one URL.

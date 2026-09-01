@@ -26,10 +26,17 @@ type MemoryStore struct {
 	positions []Position
 	paymentOrders map[string]*PaymentOrder
 
+	// 金龟子 (Jinguizi) simulated coin wallet — isolated from the main wallet.
+	jinguiziWallets map[int64]*JinguiziWallet
+	jinguiziTxns    map[int64][]JinguiziTransaction
+	// 金龟子选拔赛报名记录（与钱包平行，独立子系统）
+	jinguiziEnrollments map[int64]*JinguiziEnrollment
+
 	userSeq   atomic.Int64
 	orderSeq  atomic.Int64
 	posSeq    atomic.Int64
 	paySeq    atomic.Int64
+	jinguiziSeq atomic.Int64
 
 	db   *sql.DB // optional SQLite durable backend (nil = memory-only)
 	dbMu sync.Mutex
@@ -43,6 +50,9 @@ func NewMemoryStore(sqlitePath string) *MemoryStore {
 		orders:      make([]Order, 0),
 		positions:   make([]Position, 0),
 		paymentOrders: make(map[string]*PaymentOrder),
+		jinguiziWallets: make(map[int64]*JinguiziWallet),
+		jinguiziTxns:    make(map[int64][]JinguiziTransaction),
+		jinguiziEnrollments: make(map[int64]*JinguiziEnrollment),
 	}
 	if sqlitePath != "" {
 		db, err := openSQLite(sqlitePath)
@@ -234,6 +244,125 @@ func (m *MemoryStore) GetWalletTransactions(userID int64) []WalletTransaction {
 	return result
 }
 
+// ========== 金龟子 (Jinguizi) simulated coin wallet helpers ==========
+
+func (m *MemoryStore) GetJinguiziWallet(userID int64) *JinguiziWallet {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if w, ok := m.jinguiziWallets[userID]; ok {
+		cp := *w
+		return &cp
+	}
+	return nil
+}
+
+// EnsureJinguiziWallet returns the user's 金龟子 wallet, creating a zero-balance
+// one on first access so callers never have to NULL-check.
+func (m *MemoryStore) EnsureJinguiziWallet(userID int64) *JinguiziWallet {
+	if w := m.GetJinguiziWallet(userID); w != nil {
+		return w
+	}
+	now := time.Now()
+	w := &JinguiziWallet{
+		UserID: userID, ID: userID, Balance: 0, Frozen: 0, TotalRecharged: 0,
+		Version: 1, CreatedAt: now, UpdatedAt: now,
+	}
+	m.SaveJinguiziWallet(w)
+	return m.GetJinguiziWallet(userID)
+}
+
+func (m *MemoryStore) SaveJinguiziWallet(w *JinguiziWallet) {
+	m.mu.Lock()
+	m.jinguiziWallets[w.UserID] = w
+	m.mu.Unlock()
+	m.persistJinguiziWallet(w.UserID)
+}
+
+func (m *MemoryStore) UpdateJinguiziBalance(userID int64, newBalance, newFrozen float64) {
+	m.mu.Lock()
+	if w, ok := m.jinguiziWallets[userID]; ok {
+		w.Balance = newBalance
+		w.Frozen = newFrozen
+		w.Version++
+	}
+	m.mu.Unlock()
+	m.persistJinguiziWallet(userID)
+}
+
+func (m *MemoryStore) AddJinguiziRecharged(userID int64, amount float64) {
+	m.mu.Lock()
+	if w, ok := m.jinguiziWallets[userID]; ok {
+		w.TotalRecharged += amount
+	}
+	m.mu.Unlock()
+	m.persistJinguiziWallet(userID)
+}
+
+func (m *MemoryStore) NextJinguiziTxnID() int64 {
+	return m.jinguiziSeq.Add(1)
+}
+
+func (m *MemoryStore) SaveJinguiziTransaction(userID int64, txn *JinguiziTransaction) {
+	if txn.ID == 0 {
+		txn.ID = m.NextJinguiziTxnID()
+	}
+	m.mu.Lock()
+	m.jinguiziTxns[userID] = append(m.jinguiziTxns[userID], *txn)
+	m.mu.Unlock()
+	m.persistJinguiziTxn(txn)
+}
+
+func (m *MemoryStore) GetJinguiziTransactions(userID int64) []JinguiziTransaction {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	txns := m.jinguiziTxns[userID]
+	result := make([]JinguiziTransaction, len(txns))
+	copy(result, txns)
+	return result
+}
+
+func (m *MemoryStore) GetAllJinguiziWallets() []*JinguiziWallet {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	res := make([]*JinguiziWallet, 0, len(m.jinguiziWallets))
+	for _, w := range m.jinguiziWallets {
+		cp := *w
+		res = append(res, &cp)
+	}
+	return res
+}
+
+// ========== 金龟子 (Jinguizi) contest enrollment helpers ==========
+
+func (m *MemoryStore) GetJinguiziEnrollment(userID int64) *JinguiziEnrollment {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if e, ok := m.jinguiziEnrollments[userID]; ok {
+		cp := *e
+		return &cp
+	}
+	return nil
+}
+
+func (m *MemoryStore) SaveJinguiziEnrollment(e *JinguiziEnrollment) {
+	m.mu.Lock()
+	m.jinguiziEnrollments[e.UserID] = e
+	m.mu.Unlock()
+	m.persistJinguiziEnrollment(e.UserID)
+}
+
+func (m *MemoryStore) GetAllJinguiziEnrollments() []*JinguiziEnrollment {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	res := make([]*JinguiziEnrollment, 0, len(m.jinguiziEnrollments))
+	for _, e := range m.jinguiziEnrollments {
+		cp := *e
+		res = append(res, &cp)
+	}
+	return res
+}
+
+
 func (m *MemoryStore) SaveOrder(o *Order) {
 	m.mu.Lock()
 	m.orders = append(m.orders, *o)
@@ -326,6 +455,14 @@ type memSnapshot struct {
 	Orders     []Order           `json:"orders"`
 	Positions  []Position        `json:"positions"`
 	PayOrders  []PaymentOrder    `json:"payment_orders"`
+	JinguiziWallets []JinguiziWallet       `json:"jinguizi_wallets"`
+	JinguiziTxns    []jinguiziTxnGroup     `json:"jinguizi_txns"`
+	JinguiziEnrollments []JinguiziEnrollment `json:"jinguizi_enrollments"`
+}
+
+type jinguiziTxnGroup struct {
+	UserID int64                `json:"user_id"`
+	Txns   []JinguiziTransaction `json:"txns"`
 }
 
 // SaveSnapshot writes the whole in-memory store to disk as JSON (atomic via temp+rename).
@@ -348,6 +485,15 @@ func (m *MemoryStore) SaveSnapshot(path string) error {
 	snap.Positions = append(snap.Positions, m.positions...)
 	for _, po := range m.paymentOrders {
 		snap.PayOrders = append(snap.PayOrders, *po)
+	}
+	for _, w := range m.jinguiziWallets {
+		snap.JinguiziWallets = append(snap.JinguiziWallets, *w)
+	}
+	for uid, txns := range m.jinguiziTxns {
+		snap.JinguiziTxns = append(snap.JinguiziTxns, jinguiziTxnGroup{UserID: uid, Txns: txns})
+	}
+	for _, e := range m.jinguiziEnrollments {
+		snap.JinguiziEnrollments = append(snap.JinguiziEnrollments, *e)
 	}
 	m.mu.RUnlock()
 
@@ -414,12 +560,30 @@ func (m *MemoryStore) LoadSnapshot(path string) error {
 			maxPay = po.ID
 		}
 	}
+	for i := range snap.JinguiziWallets {
+		w := snap.JinguiziWallets[i]
+		m.jinguiziWallets[w.UserID] = &w
+	}
+	for i := range snap.JinguiziEnrollments {
+		e := snap.JinguiziEnrollments[i]
+		m.jinguiziEnrollments[e.UserID] = &e
+	}
+	var maxJi int64
+	for _, g := range snap.JinguiziTxns {
+		m.jinguiziTxns[g.UserID] = g.Txns
+		for _, t := range g.Txns {
+			if t.ID > maxJi {
+				maxJi = t.ID
+			}
+		}
+	}
 	// Restore sequence counters so new IDs don't collide with restored ones.
 	// NextUserID/NextOrderID/NextPositionID themselves do +1, so store the max.
 	m.userSeq.Store(maxUser)
 	m.orderSeq.Store(maxOrder)
 	m.posSeq.Store(maxPos)
 	m.paySeq.Store(maxPay)
+	m.jinguiziSeq.Store(maxJi)
 	return nil
 }
 
