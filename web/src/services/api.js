@@ -102,9 +102,12 @@ export const paymentAPI = {
 export const jinguiziAPI = {
   getWallet: () => api.get('/jinguizi/wallet'),
   getTransactions: (params) => api.get('/jinguizi/transactions', { params }),
+  getEnrollment: () => api.get('/jinguizi/enrollment'),
   adminList: (params) => api.get('/admin/jinguizi/list', { params }),
   adminRecharge: (payload) => api.post('/admin/jinguizi/recharge', payload),
   adminAdjust: (payload) => api.post('/admin/jinguizi/adjust', payload),
+  adminEnroll: (payload) => api.post('/admin/jinguizi/enroll', payload),
+  adminSettle: (payload) => api.post('/admin/jinguizi/settle', payload),
 }
 
 // ========== Admin API (平台管理后台) ==========

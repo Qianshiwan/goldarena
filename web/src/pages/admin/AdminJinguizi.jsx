@@ -30,6 +30,15 @@ export default function AdminJinguizi() {
   const [adjustAmount, setAdjustAmount] = useState('')
   const [adjustRemark, setAdjustRemark] = useState('')
 
+  // 报名选拔赛（按档位发放参赛资金）
+  const [enrollTarget, setEnrollTarget] = useState('')
+  const [enrollTier, setEnrollTier] = useState('small')
+
+  // 结算 / 淘汰
+  const [settleTarget, setSettleTarget] = useState('')
+  const [settleAction, setSettleAction] = useState('settle')
+  const [settleReward, setSettleReward] = useState('')
+
   const loadList = async () => {
     try {
       const { data } = await jinguiziAPI.adminList({ keyword })
@@ -81,6 +90,44 @@ export default function AdminJinguizi() {
       loadList()
     } catch (e) {
       setMsg('调整失败: ' + (e.response?.data?.message || '未知错误'))
+    }
+  }
+
+  const doEnroll = async () => {
+    setMsg('')
+    if (!enrollTarget.trim()) return setMsg('请填写目标用户（ID 或 用户名）')
+    try {
+      const { data } = await jinguiziAPI.adminEnroll({
+        ...resolveTarget(enrollTarget),
+        tier: enrollTier,
+      })
+      const d = data.data
+      setMsg(`报名成功：用户 ${d.user_id} · ${d.tier_label} · 发放 ${fmt(d.initial_capital)} (余额 ${fmt(d.balance_before)} → ${fmt(d.balance_after)})`)
+      setEnrollTarget('')
+      loadList()
+    } catch (e) {
+      setMsg('报名失败: ' + (e.response?.data?.message || '未知错误'))
+    }
+  }
+
+  const doSettle = async () => {
+    setMsg('')
+    if (!settleTarget.trim()) return setMsg('请填写目标用户（ID 或 用户名）')
+    const reward = parseFloat(settleReward) || 0
+    try {
+      const { data } = await jinguiziAPI.adminSettle({
+        ...resolveTarget(settleTarget),
+        action: settleAction,
+        reward,
+      })
+      const d = data.data
+      const verb = d.action === 'eliminate' ? '淘汰结算（收回参赛资金）' : '达标结算'
+      setMsg(`${verb}成功：用户 ${d.user_id} · 余额 ${fmt(d.balance_before)} → ${fmt(d.balance_after)}`)
+      setSettleTarget('')
+      setSettleReward('')
+      loadList()
+    } catch (e) {
+      setMsg('结算失败: ' + (e.response?.data?.message || '未知错误'))
     }
   }
 
@@ -177,6 +224,84 @@ export default function AdminJinguizi() {
               className="text-sm px-4 py-2 w-full rounded border border-gray-700 text-gray-300 hover:border-gold hover:text-gold transition-colors"
             >
               执行增减
+            </button>
+          </div>
+        </div>
+
+        {/* 报名选拔赛 */}
+        <div className="trade-card p-4">
+          <h3 className="text-sm font-semibold text-gold mb-3">报名选拔赛（按档位发放参赛资金）</h3>
+          <div className="space-y-3">
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">目标用户（用户ID 或 用户名）</label>
+              <input
+                value={enrollTarget}
+                onChange={(e) => setEnrollTarget(e.target.value)}
+                placeholder="例如 6 或 jinguizi_user"
+                className="w-full"
+              />
+            </div>
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">参赛档位</label>
+              <select
+                value={enrollTier}
+                onChange={(e) => setEnrollTier(e.target.value)}
+                className="w-full bg-dark-200 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-200"
+              >
+                <option value="small">小账户 (100万)</option>
+                <option value="medium">中账户 (500万)</option>
+                <option value="large">大账户 (1000万)</option>
+              </select>
+            </div>
+            <button onClick={doEnroll} className="btn-gold text-sm px-4 py-2 w-full">
+              报名并发放参赛资金
+            </button>
+          </div>
+        </div>
+
+        {/* 结算 / 淘汰 */}
+        <div className="trade-card p-4">
+          <h3 className="text-sm font-semibold text-gold mb-3">结算 / 淘汰</h3>
+          <div className="space-y-3">
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">目标用户（用户ID 或 用户名）</label>
+              <input
+                value={settleTarget}
+                onChange={(e) => setSettleTarget(e.target.value)}
+                placeholder="例如 6 或 jinguizi_user"
+                className="w-full"
+              />
+            </div>
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">操作</label>
+              <select
+                value={settleAction}
+                onChange={(e) => setSettleAction(e.target.value)}
+                className="w-full bg-dark-200 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-200"
+              >
+                <option value="settle">达标结算（可选发放奖励）</option>
+                <option value="eliminate">淘汰（收回参赛资金）</option>
+              </select>
+            </div>
+            {settleAction === 'settle' && (
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">奖励金龟子币（可选，达标时发放）</label>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={settleReward}
+                  onChange={(e) => setSettleReward(e.target.value)}
+                  placeholder="0"
+                  className="w-full"
+                />
+              </div>
+            )}
+            <button
+              onClick={doSettle}
+              className="text-sm px-4 py-2 w-full rounded border border-gray-700 text-gray-300 hover:border-gold hover:text-gold transition-colors"
+            >
+              执行结算 / 淘汰
             </button>
           </div>
         </div>

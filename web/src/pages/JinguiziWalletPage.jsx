@@ -7,11 +7,14 @@ const typeLabel = (t) => {
     case 'admin_recharge': return '管理员充值'
     case 'admin_deduct': return '管理员扣减'
     case 'contest_reward': return '选拔赛奖励'
-    case 'contest_entry': return '参赛扣除'
+    case 'contest_entry': return '报名发放'
     case 'settlement': return '结算'
     default: return t
   }
 }
+
+const tierLabel = { small: '小账户 (100万)', medium: '中账户 (500万)', large: '大账户 (1000万)' }
+const statusLabel = { active: '参赛中', settled: '已结算', eliminated: '已淘汰' }
 
 // 收入类（余额增加）
 const isIncomeType = (t) => ['admin_recharge', 'contest_reward', 'settlement'].includes(t)
@@ -22,6 +25,7 @@ function fmt(n) {
 
 export default function JinguiziWalletPage() {
   const [wallet, setWallet] = useState(null)
+  const [enrollment, setEnrollment] = useState(null)
   const [transactions, setTransactions] = useState([])
   const [txnTotal, setTxnTotal] = useState(0)
   const [txnPage, setTxnPage] = useState(1)
@@ -36,6 +40,10 @@ export default function JinguiziWalletPage() {
     try {
       const { data } = await jinguiziAPI.getWallet()
       if (data.data) setWallet(data.data)
+    } catch {}
+    try {
+      const { data } = await jinguiziAPI.getEnrollment()
+      setEnrollment(data.data?.enrollment || null)
     } catch {}
     await loadTransactions(1)
   }
@@ -88,6 +96,46 @@ export default function JinguiziWalletPage() {
           </div>
         </div>
       </div>
+
+      {/* 选拔赛参赛状态 */}
+      {enrollment && (
+        <div className="trade-card p-6">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-sm font-semibold text-gold">选拔赛参赛状态</h3>
+            <span className={`px-2 py-0.5 rounded text-xs ${
+              enrollment.status === 'active' ? 'bg-green-900/30 text-green-400'
+              : enrollment.status === 'settled' ? 'bg-gold/20 text-gold'
+              : 'bg-red-900/30 text-red-400'
+            }`}>
+              {statusLabel[enrollment.status] || enrollment.status}
+            </span>
+          </div>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div>
+              <div className="text-gray-500 text-xs mb-1">参赛档位</div>
+              <div className="text-xl font-bold text-gold">{tierLabel[enrollment.tier] || enrollment.tier}</div>
+            </div>
+            <div>
+              <div className="text-gray-500 text-xs mb-1">参赛资金</div>
+              <div className="text-xl font-mono font-bold text-gray-200">{fmt(enrollment.initial_capital)}</div>
+              <div className="text-xs text-gray-500 mt-0.5">金龟子币</div>
+            </div>
+            <div>
+              <div className="text-gray-500 text-xs mb-1">报名时间</div>
+              <div className="text-sm font-mono text-gray-300">{new Date(enrollment.enrolled_at).toLocaleString('zh-CN')}</div>
+            </div>
+            <div>
+              <div className="text-gray-500 text-xs mb-1">结算时间</div>
+              <div className="text-sm font-mono text-gray-300">
+                {enrollment.settled_at ? new Date(enrollment.settled_at).toLocaleString('zh-CN') : '—'}
+              </div>
+            </div>
+          </div>
+          <p className="text-xs text-gray-500 leading-relaxed mt-3">
+            参赛资金为选拔赛专用「金龟子模拟币」，与平台普通游戏币完全隔离，专款专用；比赛结束后由管理员按规则结算。
+          </p>
+        </div>
+      )}
 
       {/* 交易流水 */}
       <div className="trade-card">
