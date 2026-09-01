@@ -32,8 +32,7 @@ function fmt(n) {
 const stageDefs = [
   { months: 1, pct: 0.01, label: '1月≥1%' },
   { months: 3, pct: 0.10, label: '3月≥10%' },
-  { months: 6, pct: 0.20, label: '6月≥20%' },
-  { months: 9, pct: 0.29, label: '9月≥29%' },
+  { months: 6, pct: 0.29, label: '6月≥29%' },
 ]
 
 export default function JinguiziWalletPage() {

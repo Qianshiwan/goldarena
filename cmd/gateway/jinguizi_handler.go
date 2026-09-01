@@ -40,8 +40,7 @@ var jinguiziStageTargets = []struct {
 }{
 	{1, 0.01}, // 1月 ≥ 1%
 	{3, 0.10}, // 3月 ≥ 10%
-	{6, 0.20}, // 6月 ≥ 20%
-	{9, 0.29}, // 9月 ≥ 29%
+	{6, 0.29}, // 6月 ≥ 29% (赛期终点)
 }
 
 // JinguiziService manages the isolated 金龟子模拟币 wallet. It is intentionally
@@ -539,7 +538,7 @@ func (s *JinguiziService) evaluateEnrollment(enr *common.JinguiziEnrollment) {
 		}
 	}
 
-	// 3) Stage-profit gates (1月1% / 3月10% / 6月20% / 9月29%).
+	// 3) Stage-profit gates (1月1% / 3月10% / 6月29%).
 	elapsed := now.Sub(enr.EnrolledAt)
 	for _, st := range jinguiziStageTargets {
 		if enr.StageReached >= st.Months {
