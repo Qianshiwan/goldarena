@@ -6,12 +6,14 @@ import TradePage from './pages/TradePage'
 import LoginPage from './pages/LoginPage'
 import RegisterPage from './pages/RegisterPage'
 import WalletPage from './pages/WalletPage'
+import JinguiziWalletPage from './pages/JinguiziWalletPage'
 import CultivationPage from './pages/CultivationPage'
 import AdminLayout from './pages/admin/AdminLayout'
 import AdminDashboard from './pages/admin/AdminDashboard'
 import AdminUsers from './pages/admin/AdminUsers'
 import AdminTrades from './pages/admin/AdminTrades'
 import AdminPayments from './pages/admin/AdminPayments'
+import AdminJinguizi from './pages/admin/AdminJinguizi'
 
 function PrivateRoute({ children }) {
   const token = useAuthStore((s) => s.token)
@@ -37,12 +39,14 @@ export default function App() {
           <Route path="/" element={<PrivateRoute><DashboardPage /></PrivateRoute>} />
           <Route path="/trade" element={<PrivateRoute><TradePage /></PrivateRoute>} />
           <Route path="/wallet" element={<PrivateRoute><WalletPage /></PrivateRoute>} />
+          <Route path="/jinguizi" element={<PrivateRoute><JinguiziWalletPage /></PrivateRoute>} />
           <Route path="/cultivation" element={<PrivateRoute><CultivationPage /></PrivateRoute>} />
           <Route path="/admin" element={<AdminRoute><AdminLayout /></AdminRoute>}>
             <Route index element={<AdminDashboard />} />
             <Route path="users" element={<AdminUsers />} />
             <Route path="trades" element={<AdminTrades />} />
             <Route path="payments" element={<AdminPayments />} />
+            <Route path="jinguizi" element={<AdminJinguizi />} />
           </Route>
           <Route path="*" element={<Navigate to="/" />} />
         </Routes>

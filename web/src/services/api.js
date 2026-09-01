@@ -98,6 +98,15 @@ export const paymentAPI = {
   qrURL: (text) => `/api/v1/payment/qr?text=${encodeURIComponent(text)}`,
 }
 
+// ========== 金龟子模拟币 (隔离钱包，管理员统一充值) ==========
+export const jinguiziAPI = {
+  getWallet: () => api.get('/jinguizi/wallet'),
+  getTransactions: (params) => api.get('/jinguizi/transactions', { params }),
+  adminList: (params) => api.get('/admin/jinguizi/list', { params }),
+  adminRecharge: (payload) => api.post('/admin/jinguizi/recharge', payload),
+  adminAdjust: (payload) => api.post('/admin/jinguizi/adjust', payload),
+}
+
 // ========== Admin API (平台管理后台) ==========
 export const adminAPI = {
   dashboard: () => api.get('/admin/dashboard'),
