@@ -43,6 +43,97 @@ func (s *TradeService) isMemoryMode() bool {
 	return s.pg == nil || s.pg.Pool == nil
 }
 
+// tradeWallet abstracts the wallet a trade's margin is drawn from. When the user has
+// an ACTIVE 金龟子 contest enrollment, margin is routed to the isolated 金龟子 wallet;
+// otherwise it uses the normal game-coin wallet. This isolates contest funds from the
+// main wallet/recharge logic without duplicating it.
+type tradeWallet struct {
+	contest bool
+	userID  int64
+	w       *common.Wallet
+	jw      *common.JinguiziWallet
+}
+
+// loadTradeWallet picks the wallet for userID. When contestID is provided and matches
+// the user's active enrollment, the contest wallet is forced (covers pending-order fills
+// whose margin was frozen from the contest wallet at placement time).
+func (s *TradeService) loadTradeWallet(userID int64, contestID *int64) (*tradeWallet, *common.JinguiziEnrollment) {
+	enr := s.mem.GetActiveEnrollment(userID)
+	if enr != nil && (contestID == nil || *contestID == 0 || *contestID == enr.UserID) {
+		return &tradeWallet{contest: true, userID: userID, jw: s.mem.EnsureJinguiziWallet(userID)}, enr
+	}
+	return &tradeWallet{contest: false, userID: userID, w: s.mem.GetWallet(userID)}, nil
+}
+
+func (tw *tradeWallet) balance() float64 {
+	if tw.contest {
+		return tw.jw.Balance
+	}
+	if tw.w == nil {
+		return 0
+	}
+	return tw.w.Balance
+}
+
+func (tw *tradeWallet) frozen() float64 {
+	if tw.contest {
+		return tw.jw.Frozen
+	}
+	if tw.w == nil {
+		return 0
+	}
+	return tw.w.Frozen
+}
+
+func (tw *tradeWallet) set(bal, froz float64) {
+	if tw.contest {
+		tw.jw.Balance = bal
+		tw.jw.Frozen = froz
+		return
+	}
+	if tw.w != nil {
+		tw.w.Balance = bal
+		tw.w.Frozen = froz
+	}
+}
+
+func (tw *tradeWallet) save(s *TradeService) {
+	if tw.contest {
+		s.mem.UpdateJinguiziBalance(tw.userID, tw.jw.Balance, tw.jw.Frozen)
+		return
+	}
+	if tw.w != nil {
+		s.mem.UpdateWalletBalance(tw.userID, tw.w.Balance, tw.w.Frozen)
+	}
+}
+
+// txn records the margin operation in the appropriate ledger (金龟子 or main).
+// For contest wallets the type is namespaced (contest_*) so the isolated ledger is clear.
+func (tw *tradeWallet) txn(s *TradeService, tType string, amount, before, after float64, ref, remark string) {
+	now := time.Now()
+	if tw.contest {
+		switch tType {
+		case "margin_freeze":
+			tType = "contest_margin_freeze"
+		case "margin_release":
+			tType = "contest_margin_release"
+		case "pnl_credit":
+			tType = "contest_pnl_credit"
+		case "pnl_debit":
+			tType = "contest_pnl_debit"
+		}
+		s.mem.SaveJinguiziTransaction(tw.userID, &common.JinguiziTransaction{
+			UserID: tw.userID, OperatorID: 0, Type: tType, Amount: amount,
+			BalanceBefore: before, BalanceAfter: after, Remark: remark, CreatedAt: now,
+		})
+		return
+	}
+	s.mem.SaveWalletTransaction(tw.userID, &common.WalletTransaction{
+		ID: time.Now().UnixNano(), UserID: tw.userID, Type: tType, Amount: amount,
+		BalanceBefore: before, BalanceAfter: after, ReferenceID: ref, Remark: remark, CreatedAt: now,
+	})
+}
+
 // ========== Order Handlers ==========
 
 type PlaceOrderReq struct {
@@ -696,22 +787,29 @@ var _ = uuid.NewString
 // ========== Memory Mode Implementations ==========
 
 func (s *TradeService) placeOrderMem(c *gin.Context, userID int64, req *PlaceOrderReq, quote *common.Quote, execPrice, margin, spreadCost float64) {
-	wallet := s.mem.GetWallet(userID)
-	if wallet == nil {
+	// Route margin to the 金龟子 contest wallet when the user has an active enrollment.
+	tw, enr := s.loadTradeWallet(userID, req.ContestID)
+	if !tw.contest && tw.w == nil {
 		common.Error(c, errs.Internal, "wallet not found")
 		return
 	}
+	if enr != nil && req.ContestID == nil {
+		id := enr.UserID
+		req.ContestID = &id
+	}
 
 	totalCost := margin + spreadCost
-	if wallet.Balance < totalCost {
+	if tw.balance() < totalCost {
 		common.Error(c, errs.InsufficientMargin,
-			fmt.Sprintf("need %.2f, have %.2f", totalCost, wallet.Balance))
+			fmt.Sprintf("need %.2f, have %.2f", totalCost, tw.balance()))
 		return
 	}
 
 	// Deduct balance, freeze margin
-	newBalance := wallet.Balance - totalCost
-	s.mem.UpdateWalletBalance(userID, newBalance, wallet.Frozen+margin)
+	newBalance := tw.balance() - totalCost
+	newFrozen := tw.frozen() + margin
+	tw.set(newBalance, newFrozen)
+	tw.save(s)
 
 	// Create order
 	orderNo := fmt.Sprintf("ORD%s%04d", time.Now().Format("20060102150405"), time.Now().Nanosecond()%10000)
@@ -768,18 +866,10 @@ func (s *TradeService) placeOrderMem(c *gin.Context, userID int64, req *PlaceOrd
 	}
 	s.mem.SavePosition(pos)
 
-	// Record wallet transaction
-	s.mem.SaveWalletTransaction(userID, &common.WalletTransaction{
-		ID:            time.Now().UnixNano(),
-		UserID:        userID,
-		Type:          "margin_freeze",
-		Amount:        margin,
-		BalanceBefore: wallet.Balance,
-		BalanceAfter:  wallet.Balance - margin,
-		ReferenceID:   orderNo,
-		Remark:        "开仓保证金",
-		CreatedAt:     now,
-	})
+	// Record wallet / contest transaction
+	balBefore := newBalance + totalCost
+	balAfter := newBalance + spreadCost
+	tw.txn(s, "margin_freeze", margin, balBefore, balAfter, orderNo, "开仓保证金")
 
 	common.Success(c, gin.H{
 		"order_id":       orderID,
@@ -835,46 +925,28 @@ func (s *TradeService) closePositionMem(c *gin.Context, userID int64, positionID
 	pos.ClosedAt = &now
 	s.mem.UpdatePosition(pos)
 
-	// Update wallet
-	wallet := s.mem.GetWallet(userID)
-	if wallet != nil {
+	// Update wallet (金龟子 contest wallet when enrolled, else main wallet)
+	tw, _ := s.loadTradeWallet(userID, pos.ContestID)
+	if tw.contest || tw.w != nil {
+		balBefore := tw.balance()
 		totalReturn := pos.Margin + pos.FloatingPnL
-		newBalance := wallet.Balance + totalReturn
-		newFrozen := wallet.Frozen - pos.Margin
+		newBalance := balBefore + totalReturn
+		newFrozen := tw.frozen() - pos.Margin
 		if newFrozen < 0 {
 			newFrozen = 0
 		}
-		s.mem.UpdateWalletBalance(userID, newBalance, newFrozen)
+		tw.set(newBalance, newFrozen)
+		tw.save(s)
 
 		// Record transactions
-		s.mem.SaveWalletTransaction(userID, &common.WalletTransaction{
-			ID:            time.Now().UnixNano(),
-			UserID:        userID,
-			Type:          "margin_release",
-			Amount:        pos.Margin,
-			BalanceBefore: wallet.Balance,
-			BalanceAfter:  wallet.Balance + pos.Margin,
-			ReferenceID:   pos.OrderNo,
-			Remark:        "平仓释放保证金",
-			CreatedAt:     now,
-		})
+		tw.txn(s, "margin_release", pos.Margin, balBefore, balBefore+pos.Margin, pos.OrderNo, "平仓释放保证金")
 
 		if pos.FloatingPnL != 0 {
 			txnType := "pnl_credit"
 			if pos.FloatingPnL < 0 {
 				txnType = "pnl_debit"
 			}
-			s.mem.SaveWalletTransaction(userID, &common.WalletTransaction{
-				ID:            time.Now().UnixNano() + 1,
-				UserID:        userID,
-				Type:          txnType,
-				Amount:        pos.FloatingPnL,
-				BalanceBefore: wallet.Balance + pos.Margin,
-				BalanceAfter:  newBalance,
-				ReferenceID:   pos.OrderNo,
-				Remark:        "平仓盈亏",
-				CreatedAt:     now,
-			})
+			tw.txn(s, txnType, pos.FloatingPnL, balBefore+pos.Margin, newBalance, pos.OrderNo, "平仓盈亏")
 		}
 	}
 
@@ -891,20 +963,27 @@ func (s *TradeService) closePositionMem(c *gin.Context, userID int64, positionID
 // placePendingOrderMem saves a limit/stop order as pending (status=1) in memory mode.
 // Margin is frozen but no position is created until the order is filled by the matching engine.
 func (s *TradeService) placePendingOrderMem(c *gin.Context, userID int64, req *PlaceOrderReq, quote *common.Quote, triggerPrice, margin float64) {
-	wallet := s.mem.GetWallet(userID)
-	if wallet == nil {
+	// Route margin to the 金龟子 contest wallet when the user has an active enrollment.
+	tw, enr := s.loadTradeWallet(userID, req.ContestID)
+	if !tw.contest && tw.w == nil {
 		common.Error(c, errs.Internal, "wallet not found")
 		return
 	}
-	if wallet.Balance < margin {
+	if enr != nil && req.ContestID == nil {
+		id := enr.UserID
+		req.ContestID = &id
+	}
+	if tw.balance() < margin {
 		common.Error(c, errs.InsufficientMargin,
-			fmt.Sprintf("need %.2f for margin freeze, have %.2f", margin, wallet.Balance))
+			fmt.Sprintf("need %.2f for margin freeze, have %.2f", margin, tw.balance()))
 		return
 	}
 
 	// Freeze margin only (no spread cost until filled)
-	newBalance := wallet.Balance - margin
-	s.mem.UpdateWalletBalance(userID, newBalance, wallet.Frozen+margin)
+	newBalance := tw.balance() - margin
+	newFrozen := tw.frozen() + margin
+	tw.set(newBalance, newFrozen)
+	tw.save(s)
 
 	orderNo := generateOrderNo()
 	orderID := s.mem.NextOrderID()
@@ -929,17 +1008,8 @@ func (s *TradeService) placePendingOrderMem(c *gin.Context, userID int64, req *P
 		UpdatedAt:     now,
 	})
 
-	s.mem.SaveWalletTransaction(userID, &common.WalletTransaction{
-		ID:            time.Now().UnixNano(),
-		UserID:        userID,
-		Type:          "margin_freeze",
-		Amount:        margin,
-		BalanceBefore: wallet.Balance,
-		BalanceAfter:  newBalance,
-		ReferenceID:   orderNo,
-		Remark:        "挂单冻结保证金",
-		CreatedAt:     now,
-	})
+	balBefore := newBalance + margin
+	tw.txn(s, "margin_freeze", margin, balBefore, newBalance, orderNo, "挂单冻结保证金")
 
 	common.Success(c, gin.H{
 		"order_id":   orderID,
@@ -1122,27 +1192,19 @@ func (s *TradeService) cancelOrderMem(c *gin.Context, userID int64, orderID int6
 	target.UpdatedAt = now
 	s.mem.UpdateOrder(target)
 
-	// Return frozen margin
-	wallet := s.mem.GetWallet(userID)
-	if wallet != nil {
-		newBalance := wallet.Balance + target.Margin
-		newFrozen := wallet.Frozen - target.Margin
+	// Return frozen margin (金龟子 contest wallet when enrolled, else main wallet)
+	tw, _ := s.loadTradeWallet(userID, target.ContestID)
+	if tw.contest || tw.w != nil {
+		balBefore := tw.balance()
+		newBalance := balBefore + target.Margin
+		newFrozen := tw.frozen() - target.Margin
 		if newFrozen < 0 {
 			newFrozen = 0
 		}
-		s.mem.UpdateWalletBalance(userID, newBalance, newFrozen)
+		tw.set(newBalance, newFrozen)
+		tw.save(s)
 
-		s.mem.SaveWalletTransaction(userID, &common.WalletTransaction{
-			ID:            time.Now().UnixNano(),
-			UserID:        userID,
-			Type:          "margin_release",
-			Amount:        target.Margin,
-			BalanceBefore: wallet.Balance,
-			BalanceAfter:  newBalance,
-			ReferenceID:   target.OrderNo,
-			Remark:        "撤单退还保证金",
-			CreatedAt:     now,
-		})
+		tw.txn(s, "margin_release", target.Margin, balBefore, newBalance, target.OrderNo, "撤单退还保证金")
 	}
 
 	common.Success(c, gin.H{"order_id": orderID, "status": "cancelled", "refunded_margin": target.Margin})
@@ -1313,9 +1375,10 @@ func (s *TradeService) matchPendingOrdersMem(quote *common.Quote, currentPrice f
 
 		// Deduct spread cost from wallet (margin was already frozen)
 		if spreadCost > 0 {
-			wallet := s.mem.GetWallet(ord.UserID)
-			if wallet != nil {
-				s.mem.UpdateWalletBalance(ord.UserID, wallet.Balance-spreadCost, wallet.Frozen)
+			tw, _ := s.loadTradeWallet(ord.UserID, ord.ContestID)
+			if tw.contest || tw.w != nil {
+				tw.set(tw.balance()-spreadCost, tw.frozen())
+				tw.save(s)
 			}
 		}
 
@@ -1525,44 +1588,26 @@ func (s *TradeService) checkSLTPMem(quote *common.Quote, currentPrice float64) [
 		p.UpdatedAt = now
 		s.mem.UpdatePosition(&p)
 
-		// Release margin + credit/debit PnL
-		wallet := s.mem.GetWallet(p.UserID)
-		if wallet != nil {
+		// Release margin + credit/debit PnL (金龟子 contest wallet when enrolled, else main)
+		tw, _ := s.loadTradeWallet(p.UserID, p.ContestID)
+		if tw.contest || tw.w != nil {
+			balBefore := tw.balance()
 			totalReturn := p.Margin + pnl
-			newBalance := wallet.Balance + totalReturn
-			newFrozen := wallet.Frozen - p.Margin
+			newBalance := balBefore + totalReturn
+			newFrozen := tw.frozen() - p.Margin
 			if newFrozen < 0 {
 				newFrozen = 0
 			}
-			s.mem.UpdateWalletBalance(p.UserID, newBalance, newFrozen)
+			tw.set(newBalance, newFrozen)
+			tw.save(s)
 
-			s.mem.SaveWalletTransaction(p.UserID, &common.WalletTransaction{
-				ID:            time.Now().UnixNano(),
-				UserID:        p.UserID,
-				Type:          "margin_release",
-				Amount:        p.Margin,
-				BalanceBefore: wallet.Balance,
-				BalanceAfter:  wallet.Balance + p.Margin,
-				ReferenceID:   p.OrderNo,
-				Remark:        reason + "_释放保证金",
-				CreatedAt:     now,
-			})
+			tw.txn(s, "margin_release", p.Margin, balBefore, balBefore+p.Margin, p.OrderNo, reason+"_释放保证金")
 			if pnl != 0 {
 				txnType := "pnl_credit"
 				if pnl < 0 {
 					txnType = "pnl_debit"
 				}
-				s.mem.SaveWalletTransaction(p.UserID, &common.WalletTransaction{
-					ID:            time.Now().UnixNano() + 1,
-					UserID:        p.UserID,
-					Type:          txnType,
-					Amount:        pnl,
-					BalanceBefore: wallet.Balance + p.Margin,
-					BalanceAfter:  newBalance,
-					ReferenceID:   p.OrderNo,
-					Remark:        reason + "_自动平仓盈亏",
-					CreatedAt:     now,
-				})
+				tw.txn(s, txnType, pnl, balBefore+p.Margin, newBalance, p.OrderNo, reason+"_自动平仓盈亏")
 			}
 		}
 

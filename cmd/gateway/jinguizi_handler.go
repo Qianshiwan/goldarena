@@ -1,6 +1,8 @@
 package main
 
 import (
+	"fmt"
+	"log"
 	"sort"
 	"strings"
 	"time"
@@ -29,16 +31,30 @@ var jinguiziTierLabel = map[string]string{
 	JinguiziTierLarge:  "大账户(1000万)",
 }
 
+// jinguiziStageTargets are the cumulative-return gates a participant must clear at
+// each milestone month. Falling short at a milestone eliminates them; clearing it
+// marks the stage reached. Mirrors the 选拔赛海报 rules.
+var jinguiziStageTargets = []struct {
+	Months    int
+	ReturnPct float64
+}{
+	{1, 0.01}, // 1月 ≥ 1%
+	{3, 0.10}, // 3月 ≥ 10%
+	{6, 0.20}, // 6月 ≥ 20%
+	{9, 0.29}, // 9月 ≥ 29%
+}
+
 // JinguiziService manages the isolated 金龟子模拟币 wallet. It is intentionally
 // decoupled from the main game-coin wallet: no shared structs, tables, or
 // recharge paths. Admins recharge participants directly (manual grant); there is
 // no real-money payment flow for this currency.
 type JinguiziService struct {
-	mem *common.MemoryStore
+	mem       *common.MemoryStore
+	marketSvc *MarketService
 }
 
-func NewJinguiziService(mem *common.MemoryStore) *JinguiziService {
-	return &JinguiziService{mem: mem}
+func NewJinguiziService(mem *common.MemoryStore, marketSvc *MarketService) *JinguiziService {
+	return &JinguiziService{mem: mem, marketSvc: marketSvc}
 }
 
 // resolveTargetUser resolves a target user from either user_id or username.
@@ -193,6 +209,14 @@ func (s *JinguiziService) AdminList(c *gin.Context) {
 			"frozen":          w.Frozen,
 			"total_recharged": w.TotalRecharged,
 		})
+		// Attach enrollment summary when the user is in the 选拔赛.
+		if enr := s.mem.GetJinguiziEnrollment(w.UserID); enr != nil {
+			rows[len(rows)-1]["enrollment_status"] = enr.Status
+			rows[len(rows)-1]["tier"] = enr.Tier
+			rows[len(rows)-1]["initial_capital"] = enr.InitialCapital
+			rows[len(rows)-1]["stage_reached"] = enr.StageReached
+			rows[len(rows)-1]["peak_equity"] = enr.PeakEquity
+		}
 	}
 	sort.Slice(rows, func(i, j int) bool {
 		return rows[i]["user_id"].(int64) > rows[j]["user_id"].(int64)
@@ -389,7 +413,8 @@ func (s *JinguiziService) AdminSettle(c *gin.Context) {
 	})
 }
 
-// GetEnrollment returns the caller's own 选拔赛 enrollment (or null).
+// GetEnrollment returns the caller's own 选拔赛 enrollment plus a live snapshot of
+// their contest equity / drawdown / stage progress.
 func (s *JinguiziService) GetEnrollment(c *gin.Context) {
 	userID := c.GetInt64("user_id")
 	e := s.mem.GetJinguiziEnrollment(userID)
@@ -397,5 +422,167 @@ func (s *JinguiziService) GetEnrollment(c *gin.Context) {
 		common.Success(c, gin.H{"enrollment": nil})
 		return
 	}
-	common.Success(c, e)
+	balance, frozen, unrealized, equity := s.computeJinguiziEquity(userID)
+	principalDD := 0.0
+	if e.InitialCapital > 0 {
+		principalDD = (e.InitialCapital - equity) / e.InitialCapital
+	}
+	peakDD := 0.0
+	if e.PeakEquity > 0 {
+		peakDD = (e.PeakEquity - equity) / e.PeakEquity
+	}
+	ret := 0.0
+	if e.InitialCapital > 0 {
+		ret = equity/e.InitialCapital - 1
+	}
+	common.Success(c, gin.H{
+		"enrollment": e,
+		"equity": gin.H{
+			"balance":             balance,
+			"frozen":              frozen,
+			"unrealized":          unrealized,
+			"dynamic_equity":      equity,
+			"peak_equity":         e.PeakEquity,
+			"principal_drawdown":  principalDD,
+			"peak_drawdown":       peakDD,
+			"return_rate":         ret,
+			"stage_reached":       e.StageReached,
+		},
+	})
+}
+
+// ========== 实时判定（自动淘汰 / 阶段达标） ==========
+
+const jinguiziContractSize = 100.0
+
+// jinguiziPositionPnL computes the floating PnL of a position at the given price.
+func jinguiziPositionPnL(p common.Position, price float64) float64 {
+	var diff float64
+	if p.Direction == 1 {
+		diff = price - p.OpenPrice
+	} else {
+		diff = p.OpenPrice - price
+	}
+	return diff * jinguiziContractSize * p.Volume
+}
+
+// computeJinguiziEquity returns the user's 金龟子 wallet balance, frozen margin,
+// total unrealized PnL across open positions, and the resulting dynamic equity.
+func (s *JinguiziService) computeJinguiziEquity(userID int64) (balance, frozen, unrealized, equity float64) {
+	w := s.mem.EnsureJinguiziWallet(userID)
+	balance = w.Balance
+	frozen = w.Frozen
+	positions := s.mem.GetPositions(userID, nil)
+	for _, p := range positions {
+		if p.Status != 1 {
+			continue
+		}
+		var price float64
+		if s.marketSvc != nil {
+			if q := s.marketSvc.GetCachedQuote(p.Symbol); q != nil && q.Price > 0 {
+				price = q.Price
+			}
+		}
+		if price <= 0 {
+			price = p.CurrentPrice // stale fallback
+		}
+		unrealized += jinguiziPositionPnL(p, price)
+	}
+	equity = balance + frozen + unrealized
+	return
+}
+
+// StartJudgeLoop periodically evaluates every active enrollment for drawdown and
+// stage-profit elimination. Runs as a background goroutine.
+func (s *JinguiziService) StartJudgeLoop() {
+	ticker := time.NewTicker(15 * time.Second)
+	go func() {
+		for range ticker.C {
+			s.JudgeAll()
+		}
+	}()
+}
+
+// JudgeAll evaluates all active enrollments once.
+func (s *JinguiziService) JudgeAll() {
+	for _, enr := range s.mem.GetAllActiveEnrollments() {
+		s.evaluateEnrollment(enr)
+	}
+}
+
+// evaluateEnrollment applies the 选拔赛 elimination rules to a single active enrollment.
+func (s *JinguiziService) evaluateEnrollment(enr *common.JinguiziEnrollment) {
+	now := time.Now()
+	_, _, _, equity := s.computeJinguiziEquity(enr.UserID)
+
+	// Track peak dynamic equity.
+	if equity > enr.PeakEquity {
+		enr.PeakEquity = equity
+	}
+
+	// 1) Principal drawdown >= 5% -> eliminate.
+	principalDD := 0.0
+	if enr.InitialCapital > 0 {
+		principalDD = (enr.InitialCapital - equity) / enr.InitialCapital
+	}
+	if principalDD >= 0.05 {
+		s.eliminateEnrollment(enr, fmt.Sprintf("本金回撤%.1f%%≥5%%", principalDD*100))
+		return
+	}
+
+	// 2) Peak dynamic-equity drawdown >= 6% -> eliminate.
+	if enr.PeakEquity > 0 {
+		peakDD := (enr.PeakEquity - equity) / enr.PeakEquity
+		if peakDD >= 0.06 {
+			s.eliminateEnrollment(enr, fmt.Sprintf("历史最高动态权益回撤%.1f%%≥6%%", peakDD*100))
+			return
+		}
+	}
+
+	// 3) Stage-profit gates (1月1% / 3月10% / 6月20% / 9月29%).
+	elapsed := now.Sub(enr.EnrolledAt)
+	for _, st := range jinguiziStageTargets {
+		if enr.StageReached >= st.Months {
+			continue
+		}
+		if elapsed < time.Duration(st.Months)*30*24*time.Hour {
+			continue
+		}
+		ret := 0.0
+		if enr.InitialCapital > 0 {
+			ret = equity/enr.InitialCapital - 1
+		}
+		if ret < st.ReturnPct {
+			s.eliminateEnrollment(enr, fmt.Sprintf("%d月阶段盈利未达标(需≥%.0f%%,实际%.1f%%)", st.Months, st.ReturnPct*100, ret*100))
+			return
+		}
+		enr.StageReached = st.Months
+	}
+
+	s.mem.SaveJinguiziEnrollment(enr)
+}
+
+// eliminateEnrollment reclaims all remaining 金龟子 contest funds and marks the
+// enrollment eliminated. The contest account is forfeit on elimination.
+func (s *JinguiziService) eliminateEnrollment(enr *common.JinguiziEnrollment, reason string) {
+	jw := s.mem.EnsureJinguiziWallet(enr.UserID)
+	before := jw.Balance + jw.Frozen
+	now := time.Now()
+	s.mem.UpdateJinguiziBalance(enr.UserID, 0, 0)
+	s.mem.SaveJinguiziTransaction(enr.UserID, &common.JinguiziTransaction{
+		UserID: enr.UserID, OperatorID: 0, Type: "settlement", Amount: -before,
+		BalanceBefore: before, BalanceAfter: 0,
+		Remark: "选拔赛自动淘汰·" + reason, CreatedAt: now,
+	})
+	enr.Status = "eliminated"
+	sa := now
+	enr.SettledAt = &sa
+	s.mem.SaveJinguiziEnrollment(enr)
+	log.Printf("[JINGUIZI] user=%d eliminated: %s (equity before=%.2f)", enr.UserID, reason, before)
+}
+
+// AdminJudge forces an immediate evaluation pass (admin tool / test hook).
+func (s *JinguiziService) AdminJudge(c *gin.Context) {
+	s.JudgeAll()
+	common.Success(c, gin.H{"message": "判定已执行", "active_remaining": len(s.mem.GetAllActiveEnrollments())})
 }

@@ -9,6 +9,10 @@ const typeLabel = (t) => {
     case 'contest_reward': return '选拔赛奖励'
     case 'contest_entry': return '报名发放'
     case 'settlement': return '结算'
+    case 'contest_margin_freeze': return '参赛冻结保证金'
+    case 'contest_margin_release': return '参赛释放保证金'
+    case 'contest_pnl_credit': return '参赛盈亏 +'
+    case 'contest_pnl_debit': return '参赛盈亏 -'
     default: return t
   }
 }
@@ -17,15 +21,25 @@ const tierLabel = { small: '小账户 (100万)', medium: '中账户 (500万)', l
 const statusLabel = { active: '参赛中', settled: '已结算', eliminated: '已淘汰' }
 
 // 收入类（余额增加）
-const isIncomeType = (t) => ['admin_recharge', 'contest_reward', 'settlement'].includes(t)
+const isIncomeType = (t) =>
+  ['admin_recharge', 'contest_reward', 'settlement', 'contest_margin_release', 'contest_pnl_credit'].includes(t)
 
 function fmt(n) {
   return (n ?? 0).toLocaleString('zh-CN', { minimumFractionDigits: 0, maximumFractionDigits: 2 })
 }
 
+// 选拔赛阶段门槛（与后端 jinguiziStageTargets 对应）
+const stageDefs = [
+  { months: 1, pct: 0.01, label: '1月≥1%' },
+  { months: 3, pct: 0.10, label: '3月≥10%' },
+  { months: 6, pct: 0.20, label: '6月≥20%' },
+  { months: 9, pct: 0.29, label: '9月≥29%' },
+]
+
 export default function JinguiziWalletPage() {
   const [wallet, setWallet] = useState(null)
   const [enrollment, setEnrollment] = useState(null)
+  const [equity, setEquity] = useState(null)
   const [transactions, setTransactions] = useState([])
   const [txnTotal, setTxnTotal] = useState(0)
   const [txnPage, setTxnPage] = useState(1)
@@ -44,6 +58,7 @@ export default function JinguiziWalletPage() {
     try {
       const { data } = await jinguiziAPI.getEnrollment()
       setEnrollment(data.data?.enrollment || null)
+      setEquity(data.data?.equity || null)
     } catch {}
     await loadTransactions(1)
   }
@@ -134,6 +149,66 @@ export default function JinguiziWalletPage() {
           <p className="text-xs text-gray-500 leading-relaxed mt-3">
             参赛资金为选拔赛专用「金龟子模拟币」，与平台普通游戏币完全隔离，专款专用；比赛结束后由管理员按规则结算。
           </p>
+        </div>
+      )}
+
+      {/* 实时权益 / 回撤 / 阶段进度（仅参赛用户显示） */}
+      {enrollment && equity && (
+        <div className="trade-card p-6">
+          <h3 className="text-sm font-semibold text-gold mb-4">实时权益与淘汰进度</h3>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-5">
+            <div>
+              <div className="text-gray-500 text-xs mb-1">动态权益</div>
+              <div className="text-xl font-mono font-bold text-gray-200">{fmt(equity.dynamic_equity)}</div>
+              <div className="text-xs text-gray-500 mt-0.5">金龟子币</div>
+            </div>
+            <div>
+              <div className="text-gray-500 text-xs mb-1">累计收益率</div>
+              <div className={`text-xl font-mono font-bold ${(equity.return_rate || 0) >= 0 ? 'price-up' : 'price-down'}`}>
+                {(equity.return_rate * 100).toFixed(2)}%
+              </div>
+            </div>
+            <div>
+              <div className="text-gray-500 text-xs mb-1">本金回撤</div>
+              <div className={`text-xl font-mono font-bold ${(equity.principal_drawdown || 0) >= 0.05 ? 'price-down' : 'text-gray-300'}`}>
+                {(equity.principal_drawdown * 100).toFixed(2)}%
+              </div>
+              <div className="text-xs text-gray-500 mt-0.5">≥5% 淘汰</div>
+            </div>
+            <div>
+              <div className="text-gray-500 text-xs mb-1">历史最高回撤</div>
+              <div className={`text-xl font-mono font-bold ${(equity.peak_drawdown || 0) >= 0.06 ? 'price-down' : 'text-gray-300'}`}>
+                {(equity.peak_drawdown * 100).toFixed(2)}%
+              </div>
+              <div className="text-xs text-gray-500 mt-0.5">≥6% 淘汰</div>
+            </div>
+          </div>
+          <div>
+            <div className="text-gray-500 text-xs mb-2">阶段盈利门槛进度</div>
+            <div className="flex flex-wrap gap-2">
+              {stageDefs.map((s) => {
+                const reached = (equity.stage_reached || 0) >= s.months
+                return (
+                  <span
+                    key={s.months}
+                    className={`px-3 py-1 rounded-full text-xs border ${
+                      reached
+                        ? 'bg-green-900/30 text-green-400 border-green-700'
+                        : 'bg-dark-200/40 text-gray-400 border-gray-700'
+                    }`}
+                  >
+                    {s.label} {reached ? '✓' : ''}
+                  </span>
+                )
+              })}
+            </div>
+            {enrollment.status === 'active' && (
+              <p className="text-xs text-gray-500 leading-relaxed mt-3">
+                系统每 15 秒自动判定：本金回撤 ≥5% 或 历史最高动态权益回撤 ≥6% 将自动淘汰并收回参赛资金；
+                到对应月份未达阶段盈利门槛同样淘汰。
+              </p>
+            )}
+          </div>
         </div>
       )}
 

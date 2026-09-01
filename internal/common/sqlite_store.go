@@ -107,7 +107,8 @@ func migrateSQLite(db *sql.DB) error {
 		`CREATE TABLE IF NOT EXISTS ga_jinguizi_enrollments (
 			user_id INTEGER PRIMARY KEY,
 			tier TEXT, initial_capital REAL, status TEXT,
-			contest_id INTEGER, enrolled_at TEXT, settled_at TEXT, remark TEXT
+			contest_id INTEGER, enrolled_at TEXT, settled_at TEXT, remark TEXT,
+			peak_equity REAL, stage_reached INTEGER
 		)`,
 	}
 	for _, s := range stmts {
@@ -115,7 +116,44 @@ func migrateSQLite(db *sql.DB) error {
 			return fmt.Errorf("migrate: %w", err)
 		}
 	}
+	// Idempotent column migration for the 金龟子 enrollment table: older deploys
+	// created ga_jinguizi_enrollments without peak_equity / stage_reached. ADD
+	// COLUMN is a no-op if the column already exists.
+	addColumnIfMissing(db, "ga_jinguizi_enrollments", "peak_equity", "REAL")
+	addColumnIfMissing(db, "ga_jinguizi_enrollments", "stage_reached", "INTEGER")
 	return nil
+}
+
+// addColumnIfMissing adds a column to a table only when it does not yet exist.
+// SQLite has no "ADD COLUMN IF NOT EXISTS", so we inspect PRAGMA table_info first.
+func addColumnIfMissing(db *sql.DB, table, col, typ string) {
+	if db == nil {
+		return
+	}
+	rows, err := db.Query(fmt.Sprintf("PRAGMA table_info(%s)", table))
+	if err != nil {
+		return
+	}
+	defer rows.Close()
+	exists := false
+	for rows.Next() {
+		var cid int
+		var name, ctype string
+		var notnull int
+		var dflt sql.NullString
+		var pk int
+		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); err == nil {
+			if name == col {
+				exists = true
+				break
+			}
+		}
+	}
+	if exists {
+		return
+	}
+	// Best-effort: ignore "duplicate column" errors defensively.
+	_, _ = db.Exec(fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", table, col, typ))
 }
 
 // ---------- nullable helpers ----------
@@ -326,12 +364,13 @@ func (m *MemoryStore) persistJinguiziEnrollment(userID int64) {
 		settled = fmtTime(*e.SettledAt)
 	}
 	_, err := m.db.Exec(`INSERT INTO ga_jinguizi_enrollments
-		(user_id,tier,initial_capital,status,contest_id,enrolled_at,settled_at,remark)
-		VALUES (?,?,?,?,?,?,?,?)
+		(user_id,tier,initial_capital,status,contest_id,enrolled_at,settled_at,remark,peak_equity,stage_reached)
+		VALUES (?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(user_id) DO UPDATE SET
 		tier=excluded.tier,initial_capital=excluded.initial_capital,status=excluded.status,
-		contest_id=excluded.contest_id,settled_at=excluded.settled_at,remark=excluded.remark`,
-		e.UserID, e.Tier, e.InitialCapital, e.Status, e.ContestID, fmtTime(e.EnrolledAt), settled, e.Remark)
+		contest_id=excluded.contest_id,settled_at=excluded.settled_at,remark=excluded.remark,
+		peak_equity=excluded.peak_equity,stage_reached=excluded.stage_reached`,
+		e.UserID, e.Tier, e.InitialCapital, e.Status, e.ContestID, fmtTime(e.EnrolledAt), settled, e.Remark, e.PeakEquity, e.StageReached)
 	if err != nil {
 		log.Printf("WARN persistJinguiziEnrollment(%d): %v", userID, err)
 	}
@@ -730,13 +769,15 @@ func (m *MemoryStore) LoadFromSQLite() (int, error) {
 	}
 
 	// 金龟子选拔赛报名记录
-	enrRows, err := m.db.Query(`SELECT user_id,tier,initial_capital,status,contest_id,enrolled_at,settled_at,remark FROM ga_jinguizi_enrollments`)
+	enrRows, err := m.db.Query(`SELECT user_id,tier,initial_capital,status,contest_id,enrolled_at,settled_at,remark,peak_equity,stage_reached FROM ga_jinguizi_enrollments`)
 	if err == nil {
 		for enrRows.Next() {
 			var e JinguiziEnrollment
 			var enrolledAt, settledAt, remark string
 			var contestID int64
-			if err := enrRows.Scan(&e.UserID, &e.Tier, &e.InitialCapital, &e.Status, &contestID, &enrolledAt, &settledAt, &remark); err != nil {
+			var peakEquity float64
+			var stageReached int
+			if err := enrRows.Scan(&e.UserID, &e.Tier, &e.InitialCapital, &e.Status, &contestID, &enrolledAt, &settledAt, &remark, &peakEquity, &stageReached); err != nil {
 				enrRows.Close()
 				return 0, err
 			}
@@ -747,6 +788,8 @@ func (m *MemoryStore) LoadFromSQLite() (int, error) {
 				e.SettledAt = &t
 			}
 			e.Remark = remark
+			e.PeakEquity = peakEquity
+			e.StageReached = stageReached
 			m.jinguiziEnrollments[e.UserID] = &e
 		}
 		enrRows.Close()

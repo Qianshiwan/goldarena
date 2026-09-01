@@ -108,6 +108,7 @@ export const jinguiziAPI = {
   adminAdjust: (payload) => api.post('/admin/jinguizi/adjust', payload),
   adminEnroll: (payload) => api.post('/admin/jinguizi/enroll', payload),
   adminSettle: (payload) => api.post('/admin/jinguizi/settle', payload),
+  adminJudge: () => api.post('/admin/jinguizi/judge'),
 }
 
 // ========== Admin API (平台管理后台) ==========

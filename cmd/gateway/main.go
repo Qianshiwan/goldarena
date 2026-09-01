@@ -156,7 +156,9 @@ func main() {
 	tradeSvc := NewTradeService(pg, rdb, memStore, marketSvc)
 	marketSvc.tradeSvc = tradeSvc // back-ref for tick-level order matching
 	cultivationSvc := NewCultivationService(pg, rdb, memStore)
-	jinguiziSvc := NewJinguiziService(memStore)
+	jinguiziSvc := NewJinguiziService(memStore, marketSvc)
+	// 金龟子选拔赛实时判定（回撤/阶段盈利自动淘汰）后台循环
+	jinguiziSvc.StartJudgeLoop()
 
 	// Admin console (management backend). Seed a default admin on first boot.
 	adminSvc := NewAdminService(pg, memStore, jwtMgr, marketSvc, tradeSvc)
@@ -354,6 +356,7 @@ func main() {
 		admin.POST("/jinguizi/adjust", jinguiziSvc.AdminAdjust)
 		admin.POST("/jinguizi/enroll", jinguiziSvc.AdminEnroll)
 		admin.POST("/jinguizi/settle", jinguiziSvc.AdminSettle)
+		admin.POST("/jinguizi/judge", jinguiziSvc.AdminJudge)
 	}
 
 	// Serve the built SPA (web/dist) so the whole app is reachable from one URL.

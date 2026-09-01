@@ -198,6 +198,9 @@ type JinguiziEnrollment struct {
 	EnrolledAt     time.Time  `json:"enrolled_at"`
 	SettledAt      *time.Time `json:"settled_at,omitempty"`
 	Remark         string     `json:"remark,omitempty"`
+	// ---- 实时判定字段（自动淘汰 / 阶段达标） ----
+	PeakEquity  float64 `json:"peak_equity"`  // 历史最高动态权益
+	StageReached int     `json:"stage_reached"` // 已通过的最高阶段(月)：0/1/3/6/9
 }
 
 // JinguiziTransaction records every change to a 金龟子 wallet.

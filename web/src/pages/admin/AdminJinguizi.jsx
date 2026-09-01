@@ -5,6 +5,8 @@ function fmt(n) {
   return (n ?? 0).toLocaleString('zh-CN', { minimumFractionDigits: 0, maximumFractionDigits: 2 })
 }
 
+const statusLabel = { active: '参赛中', settled: '已结算', eliminated: '已淘汰' }
+
 // 将"目标用户"输入框解析为后端需要的 user_id 或 username
 function resolveTarget(raw) {
   const v = (raw || '').trim()
@@ -128,6 +130,16 @@ export default function AdminJinguizi() {
       loadList()
     } catch (e) {
       setMsg('结算失败: ' + (e.response?.data?.message || '未知错误'))
+    }
+  }
+
+  const doJudge = async () => {
+    setMsg('')
+    try {
+      const { data } = await jinguiziAPI.adminJudge()
+      setMsg(`判定已执行，剩余参赛 ${data.data.active_remaining} 人`)
+    } catch (e) {
+      setMsg('判定失败: ' + (e.response?.data?.message || '未知错误'))
     }
   }
 
@@ -311,12 +323,20 @@ export default function AdminJinguizi() {
       <div className="trade-card overflow-x-auto">
         <div className="p-3 border-b border-gray-800 flex items-center justify-between">
           <h3 className="text-sm font-semibold text-gray-300">金龟子钱包列表</h3>
-          <input
-            value={keyword}
-            onChange={(e) => setKeyword(e.target.value)}
-            placeholder="搜索 用户名 / 昵称"
-            className="w-56 text-xs py-1.5"
-          />
+          <div className="flex items-center gap-2">
+            <button
+              onClick={doJudge}
+              className="text-xs px-3 py-1.5 rounded border border-gray-700 text-gray-300 hover:border-gold hover:text-gold transition-colors"
+            >
+              强制判定
+            </button>
+            <input
+              value={keyword}
+              onChange={(e) => setKeyword(e.target.value)}
+              placeholder="搜索 用户名 / 昵称"
+              className="w-56 text-xs py-1.5"
+            />
+          </div>
         </div>
         <table className="w-full text-sm">
           <thead>
@@ -327,6 +347,9 @@ export default function AdminJinguizi() {
               <th className="text-right p-3">余额</th>
               <th className="text-right p-3">冻结</th>
               <th className="text-right p-3">累计充值</th>
+              <th className="text-left p-3">参赛状态</th>
+              <th className="text-left p-3">档位</th>
+              <th className="text-right p-3">阶段</th>
             </tr>
           </thead>
           <tbody>
@@ -338,6 +361,21 @@ export default function AdminJinguizi() {
                 <td className="p-3 text-right font-mono text-gold font-bold">{fmt(w.balance)}</td>
                 <td className="p-3 text-right font-mono text-orange-400">{fmt(w.frozen || 0)}</td>
                 <td className="p-3 text-right font-mono text-gray-300">{fmt(w.total_recharged || 0)}</td>
+                <td className="p-3">
+                  {w.enrollment_status ? (
+                    <span className={`px-2 py-0.5 rounded text-xs ${
+                      w.enrollment_status === 'active' ? 'bg-green-900/30 text-green-400'
+                        : w.enrollment_status === 'settled' ? 'bg-gold/20 text-gold'
+                        : 'bg-red-900/30 text-red-400'
+                    }`}>
+                      {statusLabel[w.enrollment_status] || w.enrollment_status}
+                    </span>
+                  ) : (
+                    <span className="text-gray-600 text-xs">未参赛</span>
+                  )}
+                </td>
+                <td className="p-3 text-gray-400 text-xs">{w.tier ? ({ small: '小', medium: '中', large: '大' }[w.tier] || w.tier) : '—'}</td>
+                <td className="p-3 text-right font-mono text-gray-300">{w.stage_reached ? `${w.stage_reached}月` : '—'}</td>
               </tr>
             ))}
             {list.length === 0 && (

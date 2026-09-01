@@ -29,6 +29,18 @@ import (
 // forming candle ticks at the full poll rate instead of half rate.
 const quoteCacheDuration = 800 * time.Millisecond
 
+// goldApiStaleThreshold: if the live source's reported update time is older
+// than this, we treat the quote as "no data" (market closed / feed dead) and
+// freeze the feed instead of showing a stale price as if it were live.
+// 10 minutes keeps the feed live through brief flat (non-moving) periods while
+// still freezing on genuine closures (weekend ~2d stale, daily break ~1h).
+const goldApiStaleThreshold = 10 * time.Minute
+
+// longGapResetThreshold: after a long gap with no accepted price (e.g. the
+// market was closed over a weekend), the first post-reopen price may
+// legitimately jump; don't reject it as a bad tick.
+const longGapResetThreshold = 10 * time.Minute
+
 // badTickMaxDeviation: a single quote moving more than this fraction from the
 // last accepted price is rejected as a bad tick (prevents phantom candle wicks).
 // XAU essentially never moves >3% within one 2s poll; real glitches do.
@@ -39,6 +51,17 @@ const badTickMaxDeviation = 0.03
 // ticks cover the gaps between probes — otherwise 1s polling burns the daily
 // quota in ~13 minutes and the feed dies for the rest of the day.
 const twelveDataCooldown = 60 * time.Second
+
+// marketPushTokenDefault is the shared secret for the local MT4 / quote-bridge
+// push endpoint (POST /api/v1/market/push). Override via market.push.token in
+// config or the MARKET_PUSH_TOKEN env var. Keep it out of public repos.
+const marketPushTokenDefault = "GAmt4Push_8Kx2qL9vRtZ"
+
+// externalQuoteMaxAge: an externally pushed quote older than this is treated as
+// stale (the local bridge is offline) and we fall back to the autonomous cloud
+// sources (gold-api.io → Sina → Twelve Data). Set generously: MT4 ticks arrive
+// far more often than this, so 10s only trips when the bridge truly dies.
+const externalQuoteMaxAge = 10 * time.Second
 
 type MarketService struct {
 	rdb          *redis.Redis
@@ -61,11 +84,19 @@ type MarketService struct {
 	// When false (simulated fallback), the next real quote re-anchors
 	// unconditionally instead of being rejected by the bad-tick filter.
 	lastValidIsReal map[string]bool
+	// lastValidAt: when the last accepted price was recorded. Used to relax
+	// the bad-tick filter after a long gap (market reopen after closure).
+	lastValidAt     map[string]time.Time
 	lastValidMu     sync.Mutex
 
 	// twelveDataTriedAt throttles Twelve Data probes (free-tier credit limit).
 	twelveCooldownMu   sync.Mutex
 	twelveDataTriedAt  map[string]time.Time
+
+	// externalQuote: latest quote pushed in from an external source (MT4/local
+	// bridge) per symbol. Highest-priority real source when fresh.
+	externalQuote   map[string]*externalQuoteData
+	externalQuoteMu sync.Mutex
 
 	// Price tick history for real K-line generation
 	priceHistory   []priceTick
@@ -88,7 +119,7 @@ type MarketService struct {
 	// tiny mean-reverting micro-moves so the chart/quote bar feel alive at 10fps
 	// while staying anchored to the last *real* price.
 	tickInterval    time.Duration // synthetic broadcast cadence (default 100ms)
-	simulateTicks  bool          // enable 0.1s synthetic ticks
+	simulateTicks  bool          // legacy 0.1s synthetic tick flag — disabled (always false)
 	tickVolatility float64       // max per-tick step as fraction of price
 
 	httpClient *http.Client
@@ -98,6 +129,14 @@ type MarketService struct {
 type priceTick struct {
 	Price     float64
 	Timestamp time.Time
+}
+
+// externalQuoteData holds a quote pushed in from an external source (e.g. the
+// user's MT4 broker feed via the local push bridge) together with the time it
+// was received, so we can tell a live bridge from a dead one.
+type externalQuoteData struct {
+	Quote *common.Quote
+	At    time.Time
 }
 
 func NewMarketService(rdb *redis.Redis, hub *ws.Hub, basePrice float64) *MarketService {
@@ -115,7 +154,9 @@ func NewMarketService(rdb *redis.Redis, hub *ws.Hub, basePrice float64) *MarketS
 		cachedQuoteAt:   make(map[string]time.Time),
 		lastValidPrice:  make(map[string]float64),
 		lastValidIsReal: make(map[string]bool),
+		lastValidAt:     make(map[string]time.Time),
 		twelveDataTriedAt: make(map[string]time.Time),
+		externalQuote:     make(map[string]*externalQuoteData),
 		priceHistory:    make([]priceTick, 0, 5000),
 		klineHistory:    make(map[string][]common.KLine),
 		currentCandle:   make(map[string]*common.KLine),
@@ -129,7 +170,11 @@ func NewMarketService(rdb *redis.Redis, hub *ws.Hub, basePrice float64) *MarketS
 	if ms.tickInterval <= 0 {
 		ms.tickInterval = 100 * time.Millisecond
 	}
-	ms.simulateTicks = viper.GetBool("market.simulate_ticks")
+	// Synthetic ticks / simulation are DISABLED by design: the user wants real
+	// 1s updates only — no 0.1s synthetic micro-moves and no simulated data.
+	// When the market is closed or the live source is unavailable, the feed
+	// simply freezes instead of showing fake prices.
+	ms.simulateTicks = false
 	ms.tickVolatility = viper.GetFloat64("market.tick_volatility")
 	if ms.tickVolatility <= 0 {
 		ms.tickVolatility = 0.0003 // ±0.03% max step per tick
@@ -173,17 +218,10 @@ func (s *MarketService) Start(ctx context.Context) {
 	s.seedHistory(ctx)
 
 	go s.pollQuotes(ctx)
-	// K-line broadcast now happens inside fetchAndBroadcast on every quote poll
-	// (every 2s), so the dedicated 5s generateKLines ticker is no longer needed.
-	// go s.generateKLines(ctx)
-	if s.simulateTicks {
-		// 0.1s live-feel: synthesize micro-moves between real 1s polls.
-		go s.tickLoop(ctx)
-	} else {
-		// Without synthetic ticks, still rebroadcast the forming candle at the
-		// poll rate so the chart keeps ticking (legacy behaviour).
-		go s.generateKLines(ctx)
-	}
+	// Real 1s quotes drive everything. We deliberately do NOT run the 0.1s
+	// synthetic tick loop (tickLoop) nor the 5s generateKLines rebroadcast:
+	// when the market is closed or the live source is down, fetchQuote returns
+	// nil and the feed simply freezes — no fake data, no phantom ticks.
 	go s.persistLoop(ctx)
 	go s.historyRollover(ctx)
 	log.Println("Market service started")
@@ -303,10 +341,10 @@ func (s *MarketService) persistKLineHistory() {
 }
 
 func (s *MarketService) pollQuotes(ctx context.Context) {
-	// 1s polling: user wants live ticks once per second. Sina hf_XAU is queried
-	// ~60 req/min — within normal tolerance; on throttling we fall back to
-	// Twelve Data, then hold the last *real* quote (never synthetic) so the
-	// chart freezes rather than shows fake prices.
+	// 1s polling: the user wants live ticks once per second (not 0.1s). Each
+	// poll fetches a real quote and broadcasts it; if no real quote is
+	// available (market closed / sources down) the feed freezes — no synthetic
+	// fallback, no simulated data.
 	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
 
@@ -647,13 +685,24 @@ func (s *MarketService) getKLinesFromHistory(symbol, contractMonth, period strin
 // ========== Multi-Source Quote Pipeline ==========
 //
 // fetchQuote tries data sources in order:
-//   1. Sina Finance (hf_XAU) — free, no API key, works in China
-//   2. Twelve Data (XAU/USD) — free tier, needs api_key
-//   3. Simulated — last-resort fallback
+//   0. External push (MT4/local broker bridge, POST /api/v1/market/push) —
+//      highest-priority REAL source when fresh (< externalQuoteMaxAge).
+//   1. gold-api.io (XAU) — real-time, key-less, CN-cloud reachable (primary cloud)
+//   2. Sina Finance (hf_XAU) — free but IP-blocked on Tencent Cloud
+//   3. Twelve Data (XAU/USD) — free tier, daily credit limits
+//   4. No data — feed freezes (no simulation, no fake prices)
 //
 // Successful real quotes are cached for quoteCacheDuration.
 
 func (s *MarketService) fetchQuote(symbol, contractMonth string) *common.Quote {
+	// Source 0: externally pushed quote (MT4/local broker bridge) — the highest
+	// priority REAL source when fresh. Checked BEFORE the cache shortcut so a
+	// fresh push always wins over a slightly-stale cloud fetch.
+	if q := s.getFreshExternalQuote(symbol); q != nil {
+		s.cacheQuote(symbol, q)
+		return q
+	}
+
 	// Return cached quote if still fresh
 	s.quoteCacheMu.Lock()
 	if q, ok := s.cachedQuote[symbol]; ok && time.Since(s.cachedQuoteAt[symbol]) < quoteCacheDuration {
@@ -662,7 +711,18 @@ func (s *MarketService) fetchQuote(symbol, contractMonth string) *common.Quote {
 	}
 	s.quoteCacheMu.Unlock()
 
-	// Source 1: Sina Finance (hf_XAU London gold spot)
+	// Source 1: gold-api.io — real-time London Gold Spot (XAU/USD), free,
+	// key-less, and reachable from Tencent Cloud (Sina hf_XAU is IP-blocked
+	// there, Twelve Data hits daily credit limits). Primary live source.
+	if q, err := s.fetchFromGoldApi(symbol); err == nil && q != nil && s.acceptPrice(symbol, q.Price) {
+		log.Printf("[quote] gold-api.io: %s=%.2f", symbol, q.Price)
+		s.cacheQuote(symbol, q)
+		return q
+	}
+	log.Printf("[quote] gold-api.io failed for %s, trying Sina...", symbol)
+
+	// Source 2: Sina Finance (hf_XAU London gold spot) — IP-blocked on CN
+	// cloud, kept as a fallback in case the block is lifted.
 	if q, err := s.fetchFromSina(symbol); err == nil && q != nil && s.acceptPrice(symbol, q.Price) {
 		log.Printf("[quote] Sina Finance: %s=%.2f", symbol, q.Price)
 		s.cacheQuote(symbol, q)
@@ -670,7 +730,7 @@ func (s *MarketService) fetchQuote(symbol, contractMonth string) *common.Quote {
 	}
 	log.Printf("[quote] Sina Finance failed/unstable for %s, trying Twelve Data...", symbol)
 
-	// Source 2: Twelve Data (throttled — free tier is ~800 credits/day, so we
+	// Source 3: Twelve Data (throttled — free tier is ~800 credits/day, so we
 	// only probe at most once per minute; the simulation below covers the gaps).
 	s.twelveCooldownMu.Lock()
 	probe := time.Since(s.twelveDataTriedAt[symbol]) >= twelveDataCooldown
@@ -688,42 +748,10 @@ func (s *MarketService) fetchQuote(symbol, contractMonth string) *common.Quote {
 		log.Printf("[quote] %s Twelve Data in cooldown (simulation covers feed)", symbol)
 	}
 
-	// Source 3: Simulated fallback. For a 24/7 simulation game we must never
-	// show a dead feed — when both real sources are down and simulate_ticks is
-	// enabled, anchor to the last known price and let synthetic ticks run.
-	if s.simulateTicks {
-		if q, ok := s.cachedQuote[symbol]; ok && q != nil && q.Price > 0 {
-			return q
-		}
-		seed := s.seedAnchor(symbol)
-		if seed > 0 {
-			sim := &common.Quote{
-				Symbol:         symbol,
-				ContractMonth:  "SPOT",
-				Price:          seed,
-				Bid:            seed - 0.05,
-				Ask:            seed + 0.05,
-				Open:           seed,
-				High:           seed,
-				Low:            seed,
-				PreviousSettle: seed,
-				Volume:         0,
-				OpenInterest:   450000,
-				Timestamp:      time.Now().UnixMilli(),
-			}
-			s.cacheQuote(symbol, sim)
-			log.Printf("[quote] %s sources down — simulated fallback @ %.2f", symbol, seed)
-			return sim
-		}
-	}
-
-	// Source 4: No simulation configured — hold the last known real quote
-	// (stale but real) so the chart freezes rather than lies.
-	if q, ok := s.cachedQuote[symbol]; ok && q != nil && q.Price > 0 {
-		log.Printf("[quote] %s sources unavailable — holding last real quote %.2f", symbol, q.Price)
-		return q
-	}
-	log.Printf("[quote] %s has no real quote available (cold start / total outage)", symbol)
+	// No real source returned a fresh quote. Per design we do NOT synthesize
+	// fake prices and we do NOT hold a stale quote as "live" — the feed simply
+	// stops (freezes) until the market reopens or the live source recovers.
+	log.Printf("[quote] %s no fresh real quote (market closed or sources down) — feed frozen", symbol)
 	return nil
 }
 
@@ -738,10 +766,11 @@ func (s *MarketService) acceptPrice(symbol string, price float64) bool {
 	s.lastValidMu.Lock()
 	defer s.lastValidMu.Unlock()
 	last := s.lastValidPrice[symbol]
-	// If the current anchor is a simulated fallback (not a real quote), accept
-	// the first real price unconditionally so we re-anchor to the live market
-	// instead of being rejected by the bad-tick deviation filter.
-	if last > 0 && s.lastValidIsReal[symbol] {
+	// Reject a single tick that deviates more than badTickMaxDeviation from the
+	// last sane price — that's an exchange glitch, never reaching the candles.
+	// Exception: after a long gap (market was closed) the reopen price may
+	// legitimately differ, so skip the filter and re-anchor to the live market.
+	if last > 0 && s.lastValidIsReal[symbol] && time.Since(s.lastValidAt[symbol]) < longGapResetThreshold {
 		dev := math.Abs(price-last) / last
 		if dev > badTickMaxDeviation {
 			log.Printf("[quote] rejected bad tick for %s: %.2f (last sane %.2f, dev %.2f%%)",
@@ -751,6 +780,7 @@ func (s *MarketService) acceptPrice(symbol string, price float64) bool {
 	}
 	s.lastValidPrice[symbol] = price
 	s.lastValidIsReal[symbol] = true
+	s.lastValidAt[symbol] = time.Now()
 	return true
 }
 
@@ -759,6 +789,130 @@ func (s *MarketService) cacheQuote(symbol string, q *common.Quote) {
 	s.cachedQuote[symbol] = q
 	s.cachedQuoteAt[symbol] = time.Now()
 	s.quoteCacheMu.Unlock()
+}
+
+// getFreshExternalQuote returns the latest externally-pushed quote for a symbol
+// if it arrived within externalQuoteMaxAge (i.e. the local bridge is alive).
+// Returns nil when there's no push yet or the bridge has gone silent, so the
+// caller falls back to the autonomous cloud sources.
+func (s *MarketService) getFreshExternalQuote(symbol string) *common.Quote {
+	s.externalQuoteMu.Lock()
+	eq, ok := s.externalQuote[symbol]
+	s.externalQuoteMu.Unlock()
+	if !ok || eq == nil {
+		return nil
+	}
+	if time.Since(eq.At) > externalQuoteMaxAge {
+		return nil
+	}
+	return eq.Quote
+}
+
+// getPushToken resolves the shared secret for the external push endpoint,
+// preferring config > env > built-in default.
+func getPushToken() string {
+	if t := viper.GetString("market.push.token"); t != "" {
+		return t
+	}
+	if t := os.Getenv("MARKET_PUSH_TOKEN"); t != "" {
+		return t
+	}
+	return marketPushTokenDefault
+}
+
+// PushQuote accepts a real-time quote pushed from an external source (e.g. the
+// user's MT4 broker feed via the local bridge). It is token-protected and
+// public (no user auth) so the bridge can reach it over the internet.
+//
+// Expected JSON body:
+//
+//	{"symbol":"XAU","price":4605.0,"bid":4604.8,"ask":4605.2,"high":...,"low":...}
+//
+// `symbol` defaults to XAU; `price` falls back to the bid/ask mid if omitted.
+func (s *MarketService) PushQuote(c *gin.Context) {
+	token := c.Query("token")
+	if token == "" {
+		if h := c.GetHeader("Authorization"); strings.HasPrefix(h, "Bearer ") {
+			token = strings.TrimPrefix(h, "Bearer ")
+		}
+	}
+	if token != getPushToken() {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid token"})
+		return
+	}
+
+	var body struct {
+		Symbol        string  `json:"symbol"`
+		ContractMonth string  `json:"contract_month"`
+		Price         float64 `json:"price"`
+		Bid           float64 `json:"bid"`
+		Ask           float64 `json:"ask"`
+		High          float64 `json:"high"`
+		Low           float64 `json:"low"`
+		Open          float64 `json:"open"`
+		Volume        int64   `json:"volume"`
+		Timestamp     int64   `json:"timestamp"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "bad json: " + err.Error()})
+		return
+	}
+	if body.Symbol == "" {
+		body.Symbol = "XAU"
+	}
+	price := body.Price
+	if price <= 0 && body.Bid > 0 && body.Ask > 0 {
+		price = (body.Bid + body.Ask) / 2
+	}
+	if price <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "price missing or invalid"})
+		return
+	}
+
+	now := time.Now()
+	q := &common.Quote{
+		Symbol:        body.Symbol,
+		ContractMonth: "SPOT",
+		Bid:           body.Bid,
+		Ask:           body.Ask,
+		Price:         price,
+		Open:          body.Open,
+		High:          body.High,
+		Low:           body.Low,
+		Volume:        body.Volume,
+		Timestamp:     now.UnixMilli(),
+	}
+
+	s.externalQuoteMu.Lock()
+	s.externalQuote[body.Symbol] = &externalQuoteData{Quote: q, At: now}
+	s.externalQuoteMu.Unlock()
+
+	// Keep lastValid in sync. The MT4 broker feed is the most authoritative
+	// price we have, so we bypass the bad-tick deviation filter for it.
+	s.lastValidMu.Lock()
+	s.lastValidPrice[body.Symbol] = price
+	s.lastValidIsReal[body.Symbol] = true
+	s.lastValidAt[body.Symbol] = now
+	s.lastValidMu.Unlock()
+
+	c.JSON(http.StatusOK, gin.H{
+		"ok":     true,
+		"symbol": body.Symbol,
+		"price":  price,
+		"at":     now.UnixMilli(),
+	})
+}
+
+// lastRealQuote returns the most recently cached real quote for a symbol
+// (if any). Used to serve a frozen-but-real price during 休市 instead of an
+// error when the live feed is unavailable.
+func (s *MarketService) lastRealQuote(symbol string) *common.Quote {
+	s.quoteCacheMu.Lock()
+	defer s.quoteCacheMu.Unlock()
+	if q, ok := s.cachedQuote[symbol]; ok && q != nil && q.Price > 0 {
+		return q
+	}
+	return nil
 }
 
 // seedAnchor returns the best available reference price to anchor synthetic
@@ -989,7 +1143,13 @@ func (s *MarketService) GetQuote(c *gin.Context) {
 
 	quote := s.fetchQuote(symbol, contractMonth)
 	if quote == nil {
-		common.Error(c, errs.InvalidSymbol, "failed to fetch quote")
+		// 休市期或所有行情源不可用：返回最后一次真实报价（冻结展示），
+		// 不编造模拟数据，也不报错导致前端空白。
+		if last := s.lastRealQuote(symbol); last != nil {
+			common.Success(c, last)
+			return
+		}
+		common.Error(c, errs.InvalidSymbol, "休市中或行情源不可用")
 		return
 	}
 	common.Success(c, quote)
@@ -1038,18 +1198,29 @@ func (s *MarketService) WebSocketHandler(c *gin.Context) {
 }
 
 func (s *MarketService) HealthCheck(c *gin.Context) {
-	dataSource := "simulated"
-	s.quoteCacheMu.Lock()
-	if len(s.cachedQuote) > 0 {
-		// Check if at least one symbol has a fresh quote
-		for sym := range s.cachedQuote {
-			if time.Since(s.cachedQuoteAt[sym]) < quoteCacheDuration*2 {
-				dataSource = "real"
-				break
-			}
+	dataSource := "no-data"
+	// External (MT4/local bridge) push is the preferred real source.
+	s.externalQuoteMu.Lock()
+	for _, eq := range s.externalQuote {
+		if eq != nil && time.Since(eq.At) <= externalQuoteMaxAge {
+			dataSource = "mt4-push"
+			break
 		}
 	}
-	s.quoteCacheMu.Unlock()
+	s.externalQuoteMu.Unlock()
+	// Fall back to checking the cloud-sourced cached quote.
+	if dataSource == "no-data" {
+		s.quoteCacheMu.Lock()
+		if len(s.cachedQuote) > 0 {
+			for sym := range s.cachedQuote {
+				if time.Since(s.cachedQuoteAt[sym]) < quoteCacheDuration*2 {
+					dataSource = "real"
+					break
+				}
+			}
+		}
+		s.quoteCacheMu.Unlock()
+	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"status":            "ok",
@@ -1092,6 +1263,71 @@ func getTwelveDataAPIKey() string {
 		return key
 	}
 	return viper.GetString("market.twelvedata.api_key")
+}
+
+// fetchFromGoldApi fetches real-time London Gold Spot (XAU/USD) from
+// gold-api.io. It is a free, key-less endpoint and — critically — is
+// reachable from Tencent Cloud datacenters, unlike Sina hf_XAU (IP-blocked)
+// and Twelve Data (daily credit caps). This makes it the primary live source.
+func (s *MarketService) fetchFromGoldApi(symbol string) (*common.Quote, error) {
+	url := "https://api.gold-api.com/price/XAU"
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("gold-api create request: %w", err)
+	}
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+
+	resp, err := s.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("gold-api http: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("gold-api status %d", resp.StatusCode)
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("gold-api read: %w", err)
+	}
+
+	var ga struct {
+		Price     float64 `json:"price"`
+		UpdatedAt string  `json:"updatedAt"`
+	}
+	if err := json.Unmarshal(body, &ga); err != nil {
+		return nil, fmt.Errorf("gold-api parse: %w", err)
+	}
+	if ga.Price <= 0 {
+		return nil, fmt.Errorf("gold-api returned zero price")
+	}
+
+	// gold-api.io keeps returning the last price during market closure, but
+	// stops advancing updatedAt. Treat a stale update as "no live data" so the
+	// feed freezes during 休市 instead of displaying a frozen fake price.
+	if ga.UpdatedAt != "" {
+		if updatedAt, perr := time.Parse(time.RFC3339, ga.UpdatedAt); perr == nil {
+			if age := time.Since(updatedAt); age > goldApiStaleThreshold {
+				return nil, fmt.Errorf("gold-api quote stale (updated %s, %s ago — market likely closed)",
+					ga.UpdatedAt, age.Round(time.Second))
+			}
+		}
+	}
+
+	now := time.Now()
+	return &common.Quote{
+		Symbol:         symbol,
+		ContractMonth:  "SPOT",
+		Bid:            ga.Price - 0.05,
+		Ask:            ga.Price + 0.05,
+		Price:          ga.Price,
+		Open:           ga.Price,
+		High:           ga.Price,
+		Low:            ga.Price,
+		PreviousSettle: ga.Price,
+		Volume:         0,
+		OpenInterest:   450000,
+		Timestamp:      now.UnixMilli(),
+	}, nil
 }
 
 // fetchFromTwelveData fetches real quotes from Twelve Data API.

@@ -39,12 +39,19 @@ market:
   history:
     enabled: true
     backfill_minutes: 1440
-  poll_interval: 5s
+  poll_interval: 1s
   heartbeat: 30s
-  # 0.1 秒级实时更新（高频合成微跳）
-  tick_interval: 100ms
-  simulate_ticks: true
+  # 实时更新节奏：仅在行情源返回真实数据时更新；休市期/源不可用直接冻结，
+  # 不做 0.1 秒合成微跳，也不模拟数据。
+  tick_interval: 1s
+  simulate_ticks: false
   tick_volatility: 0.0003
+  push:
+    enabled: true
+    # 本地 MT4 / 行情桥推送共享密钥；也可用环境变量 MARKET_PUSH_TOKEN 覆盖。
+    # 与 mt4/GoldArenaPushEA.mq4 里写死的 token 必须一致。
+    token: "GAmt4Push_8Kx2qL9vRtZ"
+    max_age: 10s   # 推送报价超过该时长视为桥离线，回退云源（代码常量 externalQuoteMaxAge）
 
 trading:
   contract_size: 100

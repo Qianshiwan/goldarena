@@ -344,6 +344,19 @@ func (m *MemoryStore) GetJinguiziEnrollment(userID int64) *JinguiziEnrollment {
 	return nil
 }
 
+// GetActiveEnrollment returns the user's enrollment only if it is currently active
+// (status == "active"). Used by the trading layer to decide whether a user's
+// margin should be drawn from the 金龟子 contest wallet instead of the main wallet.
+func (m *MemoryStore) GetActiveEnrollment(userID int64) *JinguiziEnrollment {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if e, ok := m.jinguiziEnrollments[userID]; ok && e.Status == "active" {
+		cp := *e
+		return &cp
+	}
+	return nil
+}
+
 func (m *MemoryStore) SaveJinguiziEnrollment(e *JinguiziEnrollment) {
 	m.mu.Lock()
 	m.jinguiziEnrollments[e.UserID] = e
@@ -358,6 +371,20 @@ func (m *MemoryStore) GetAllJinguiziEnrollments() []*JinguiziEnrollment {
 	for _, e := range m.jinguiziEnrollments {
 		cp := *e
 		res = append(res, &cp)
+	}
+	return res
+}
+
+// GetAllActiveEnrollments returns every enrollment whose status is "active".
+func (m *MemoryStore) GetAllActiveEnrollments() []*JinguiziEnrollment {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	res := make([]*JinguiziEnrollment, 0)
+	for _, e := range m.jinguiziEnrollments {
+		if e.Status == "active" {
+			cp := *e
+			res = append(res, &cp)
+		}
 	}
 	return res
 }
