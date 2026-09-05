@@ -311,7 +311,7 @@ export default function AdminJinguizi() {
                 <div>小账户(200元): <span className="font-mono text-gold">(1 + 20%×1) × 200 = 240</span></div>
                 <div>中账户(1000元): <span className="font-mono text-gold">(1 + 20%×2) × 1000 = 1400</span></div>
                 <div>大账户(2000元): <span className="font-mono text-gold">(2 + 20%×3) × 2000 = 5200</span></div>
-                <div className="mt-1 text-cyan-300">触发线: 盈利 ≥ 100%；未达标仅退 6% 管理费, 无奖励</div>
+                <div className="mt-1 text-cyan-300">退管理费: 盈利 ≥ <span className="text-gold">6%</span> 才退 6% (¥12 / ¥60 / ¥120); 奖励: 盈利 ≥ 100% 触发,固定额</div>
                 <div className="mt-2 text-amber-300 font-semibold">
                   ⚠️ 平台政策: 只入金不出金, 奖励/退款均<strong>不自动入账</strong>。
                   本次结算仅写入 manual 流水(type=contest_reward_manual / contest_fee_refund_manual),

@@ -687,6 +687,7 @@ func (m *MemoryStore) LoadFromSQLite() (int, error) {
 	if err != nil {
 		return 0, err
 	}
+	var maxWalletTxn int64
 	for txnRows.Next() {
 		var t WalletTransaction
 		var createdAt string
@@ -696,8 +697,12 @@ func (m *MemoryStore) LoadFromSQLite() (int, error) {
 		}
 		t.CreatedAt = parseTime(createdAt)
 		m.walletTxns[t.UserID] = append(m.walletTxns[t.UserID], t)
+		if t.ID > maxWalletTxn {
+			maxWalletTxn = t.ID
+		}
 	}
 	txnRows.Close()
+	m.walletTxnSeq.Store(maxWalletTxn)
 
 	// Orders
 	orderRows, err := m.db.Query(`SELECT id,order_no,user_id,contest_id,symbol,contract_month,direction,order_type,volume,leverage,price,stop_loss,take_profit,status,executed_price,margin,spread_cost,created_at,updated_at FROM ga_orders`)
@@ -822,7 +827,8 @@ func (m *MemoryStore) LoadFromSQLite() (int, error) {
 	if err == nil {
 		for enrRows.Next() {
 			var e JinguiziEnrollment
-			var enrolledAt, settledAt, remark string
+			var enrolledAt, remark string
+			var settledAt sql.NullString
 			var contestID int64
 			var peakEquity float64
 			var stageReached int
@@ -832,8 +838,8 @@ func (m *MemoryStore) LoadFromSQLite() (int, error) {
 			}
 			e.ContestID = contestID
 			e.EnrolledAt = parseTime(enrolledAt)
-			if settledAt != "" {
-				t := parseTime(settledAt)
+			if settledAt.Valid && settledAt.String != "" {
+				t := parseTime(settledAt.String)
 				e.SettledAt = &t
 			}
 			e.Remark = remark

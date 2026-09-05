@@ -41,6 +41,7 @@ type MemoryStore struct {
 	paySeq    atomic.Int64
 	jinguiziSeq atomic.Int64
 	msgSeq    atomic.Int64
+	walletTxnSeq atomic.Int64
 
 	db   *sql.DB // optional SQLite durable backend (nil = memory-only)
 	dbMu sync.Mutex
@@ -234,10 +235,17 @@ func (m *MemoryStore) UpdateWalletBalance(userID int64, newBalance, newFrozen fl
 }
 
 func (m *MemoryStore) SaveWalletTransaction(userID int64, txn *WalletTransaction) {
+	if txn.ID == 0 {
+		txn.ID = m.NextWalletTxnID()
+	}
 	m.mu.Lock()
 	m.walletTxns[userID] = append(m.walletTxns[userID], *txn)
 	m.mu.Unlock()
 	m.persistWalletTxn(txn)
+}
+
+func (m *MemoryStore) NextWalletTxnID() int64 {
+	return m.walletTxnSeq.Add(1)
 }
 
 func (m *MemoryStore) GetWalletTransactions(userID int64) []WalletTransaction {
@@ -656,6 +664,7 @@ func (m *MemoryStore) LoadSnapshot(path string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	var maxUser, maxOrder, maxPos, maxPay int64
+	var maxWalletTxn int64
 	for i := range snap.Users {
 		u := snap.Users[i]
 		m.users[u.ID] = &u
@@ -669,6 +678,11 @@ func (m *MemoryStore) LoadSnapshot(path string) error {
 	}
 	for _, g := range snap.WalletTxns {
 		m.walletTxns[g.UserID] = g.Txns
+		for _, t := range g.Txns {
+			if t.ID > maxWalletTxn {
+				maxWalletTxn = t.ID
+			}
+		}
 	}
 	for i := range snap.Orders {
 		o := snap.Orders[i]
@@ -725,6 +739,7 @@ func (m *MemoryStore) LoadSnapshot(path string) error {
 	m.paySeq.Store(maxPay)
 	m.jinguiziSeq.Store(maxJi)
 	m.msgSeq.Store(maxMsg)
+	m.walletTxnSeq.Store(maxWalletTxn)
 	return nil
 }
 
