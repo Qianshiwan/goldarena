@@ -7,6 +7,7 @@ const typeLabel = (t) => {
     case 'admin_recharge': return '管理员充值'
     case 'admin_deduct': return '管理员扣减'
     case 'contest_reward': return '选拔赛奖励'
+    case 'contest_reward_manual': return '选拔赛奖励·待发放'
     case 'contest_entry': return '报名发放'
     case 'settlement': return '结算'
     case 'contest_margin_freeze': return '参赛冻结保证金'
@@ -17,10 +18,14 @@ const typeLabel = (t) => {
   }
 }
 
+// 是否「待人工发放」流水(已记但未入账,BalanceBefore==After)
+const isManualPendingType = (t) =>
+  ['contest_reward_manual', 'contest_fee_refund_manual'].includes(t)
+
 const tierLabel = { small: '小账户 (100万)', medium: '中账户 (500万)', large: '大账户 (1000万)' }
 const statusLabel = { active: '参赛中', settled: '已结算', eliminated: '已淘汰' }
 
-// 收入类（余额增加）
+// 收入类（余额增加）—— contest_reward_manual 不入账,既不算收入也不算支出(单独走金色徽章)
 const isIncomeType = (t) =>
   ['admin_recharge', 'contest_reward', 'settlement', 'contest_margin_release', 'contest_pnl_credit'].includes(t)
 
@@ -79,8 +84,10 @@ export default function JinguiziWalletPage() {
       {/* 说明横幅 */}
       <div className="trade-card p-4 border-gold/30">
         <p className="text-xs text-gray-400 leading-relaxed">
-          「金龟子模拟币」为选拔赛专用资金，与平台普通游戏币<strong className="text-gold">完全隔离</strong>，
-          仅由管理员统一充值发放，不可自行充值或提现。
+          「金龟子模拟币」为选拔赛专用资金，与平台普通游戏币<strong className="text-gold">完全隔离</strong>；
+          <strong className="text-red-400">平台只入金，不出金</strong>，
+          <strong className="text-gold">奖励与退款均需由管理员线下人工发放</strong>，
+          金龟子钱包不会自动入账。
         </p>
       </div>
 
@@ -146,7 +153,9 @@ export default function JinguiziWalletPage() {
             </div>
           </div>
           <p className="text-xs text-gray-500 leading-relaxed mt-3">
-            参赛资金为选拔赛专用「金龟子模拟币」，与平台普通游戏币完全隔离，专款专用；比赛结束后由管理员按规则结算。
+            参赛资金为选拔赛专用「金龟子模拟币」，与平台普通游戏币完全隔离，专款专用；
+            比赛结束后的达标奖励和 6% 管理费退款，<strong className="text-gold">均不自动入账</strong>，
+            由管理员按规则核算后<strong className="text-gold">线下人工发放</strong>。
           </p>
         </div>
       )}
@@ -230,18 +239,25 @@ export default function JinguiziWalletPage() {
             </thead>
             <tbody>
               {transactions.map((t) => {
-                const income = isIncomeType(t.type) || t.amount >= 0
+                const manual = isManualPendingType(t.type)
+                const income = !manual && (isIncomeType(t.type) || t.amount >= 0)
                 return (
                   <tr key={t.id} className="border-b border-gray-800/50 hover:bg-dark-200/50">
                     <td className="p-3">
                       <span className={`px-2 py-0.5 rounded text-xs ${
-                        income ? 'bg-green-900/30 text-green-400' : 'bg-red-900/30 text-red-400'
+                        manual
+                          ? 'bg-amber-900/30 text-amber-300 border border-amber-700/40'
+                          : income
+                          ? 'bg-green-900/30 text-green-400'
+                          : 'bg-red-900/30 text-red-400'
                       }`}>
                         {typeLabel(t.type)}
                       </span>
                     </td>
-                    <td className={`text-right p-3 font-mono ${income ? 'price-up' : 'price-down'}`}>
-                      {income ? '+' : ''}{fmt(t.amount)}
+                    <td className={`text-right p-3 font-mono ${
+                      manual ? 'text-amber-300' : income ? 'price-up' : 'price-down'
+                    }`}>
+                      {manual ? '+' : income ? '+' : ''}{fmt(t.amount)}
                     </td>
                     <td className="text-right p-3 font-mono text-gray-400">{fmt(t.balance_before)}</td>
                     <td className="text-right p-3 font-mono text-gray-300">{fmt(t.balance_after)}</td>

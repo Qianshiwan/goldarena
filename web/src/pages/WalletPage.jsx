@@ -241,19 +241,26 @@ export default function WalletPage() {
             </thead>
             <tbody>
               {transactions.map((t) => {
-                const isIncome = [
+                const isManual = t.type === 'contest_fee_refund_manual'
+                const isIncome = !isManual && [
                   'recharge', 'bonus', 'margin_release', 'pnl_credit', 'contest_reward',
                 ].includes(t.type)
                 return (
                   <tr key={t.id} className="border-b border-gray-800/50 hover:bg-dark-200/50">
                     <td className="p-3">
                       <span className={`px-2 py-0.5 rounded text-xs ${
-                        isIncome ? 'bg-green-900/30 text-green-400' : 'bg-red-900/30 text-red-400'
+                        isManual
+                          ? 'bg-amber-900/30 text-amber-300 border border-amber-700/40'
+                          : isIncome
+                          ? 'bg-green-900/30 text-green-400'
+                          : 'bg-red-900/30 text-red-400'
                       }`}>
-                        {t.type}
+                        {t.type === 'contest_fee_refund_manual' ? '选拔赛退管理费·待发放' : t.type}
                       </span>
                     </td>
-                    <td className={`text-right p-3 font-mono ${isIncome ? 'price-up' : 'price-down'}`}>
+                    <td className={`text-right p-3 font-mono ${
+                      isManual ? 'text-amber-300' : isIncome ? 'price-up' : 'price-down'
+                    }`}>
                       {isIncome ? '+' : '-'}{Math.abs(t.amount).toLocaleString()}
                     </td>
                     <td className="text-right p-3 font-mono text-gray-400">{Math.floor(t.balance_before).toLocaleString()}</td>

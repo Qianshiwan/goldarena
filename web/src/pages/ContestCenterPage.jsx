@@ -273,7 +273,9 @@ export default function ContestCenterPage() {
           <h2 className="text-lg font-semibold text-gray-200">缴费报名</h2>
           <div className="trade-card p-6">
             <p className="text-gray-400 text-sm mb-4">
-              选择参赛档位并支付报名费（管理费），支付成功后系统自动开通参赛账户并发放对应参赛资金。
+              选择参赛档位并支付报名费（管理费），支付成功后系统将自动开通参赛账户并发放对应参赛资金。
+              <strong className="text-gold ml-1">注意：比赛结束后的达标奖励和 6% 管理费退款，
+              均需由管理员按规则核算后线下人工发放，不会自动入账。</strong>
             </p>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               {['small', 'medium', 'large'].map((t) => (

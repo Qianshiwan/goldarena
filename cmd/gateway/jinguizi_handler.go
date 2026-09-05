@@ -466,10 +466,11 @@ type AdminSettleJinguiziReq struct {
 // AdminSettle settles an active enrollment.
 //   - eliminate: reclaims the dedicated contest capital (floor 0) and marks eliminated.
 //   - settle:    computes the current cumulative returnPct = (equity-initial)/initial,
-//     refunds 6% of the 管理费 to the user's 游戏币 wallet, then — if returnPct
-//     ≥ 20% (per tier) — credits the formula reward
-//     (Base + ReturnPct × Coeff) × Fee into the 金龟子 wallet.
-//     Below the trigger, only the 6% refund is granted. Marks settled either way.
+//     then computes the per-tier reward via calculateJinguiziReward (触发线 ≥ 100%).
+//     ⚠️ 【只入金不出金, 奖励由人工发放】结算时**不**自动入游戏币/金龟子钱包,
+//     仅写两条 manual_* 流水(type=contest_fee_refund_manual / contest_reward_manual),
+//     BalanceBefore==BalanceAfter==当前余额,记录待人工发放金额;管理员可按流水线下发放.
+//     Marks settled either way.
 func (s *JinguiziService) AdminSettle(c *gin.Context) {
 	operatorID := c.GetInt64("user_id")
 	var req AdminSettleJinguiziReq
@@ -532,51 +533,53 @@ func (s *JinguiziService) AdminSettle(c *gin.Context) {
 	}
 	res := calculateJinguiziReward(enr.Tier, returnPct)
 
-	// 1) 退 6% 管理费 → 游戏币钱包
+	// 1) 退 6% 管理费 → 仅记 manual 流水, 不入游戏币钱包 (平台只入金不出金, 由管理员线下发放)
 	if res.FeeRefund > 0 {
 		gw := s.mem.GetWallet(uid)
 		if gw == nil {
-			// 游戏币钱包不存在则用 EnsureJinguiziWallet 同款的零值初始化,
-			// 这里直接用 GetWallet 拿到的 nil 走默认 0; 实际产品上每个用户
-			// 都有游戏币钱包(注册时建), 这里只是兜底.
 			gw = &common.Wallet{UserID: uid, Balance: 0, Frozen: 0}
 		}
-		gbBefore := gw.Balance
-		gbAfter := gbBefore + res.FeeRefund
-		s.mem.UpdateWalletBalance(uid, gbAfter, gw.Frozen)
+		gbCurrent := gw.Balance
+		// 平台政策: 退管理费不再自动入游戏币钱包, 仅记一条 manual_* 流水.
+		// BalanceBefore == BalanceAfter == 当前余额, Amount>0 表示「待发放金额」.
+		// 管理员可在 /admin/jinguizi 按用户名查流水, 自行通知用户发放.
 		s.mem.SaveWalletTransaction(uid, &common.WalletTransaction{
 			UserID:        uid,
-			Type:          "contest_fee_refund",
+			Type:          "contest_fee_refund_manual",
 			Amount:        res.FeeRefund,
-			BalanceBefore: gbBefore,
-			BalanceAfter:  gbAfter,
-			Remark: fmt.Sprintf("选拔赛结算·退还%.0f%%管理费(%s)", jinguiziFeeRefundPct*100, jinguiziTierLabel[enr.Tier]),
+			BalanceBefore: gbCurrent,
+			BalanceAfter:  gbCurrent,
+			Remark:        fmt.Sprintf("[待人工发放] 选拔赛结算·退还%.0f%%管理费(%s)", jinguiziFeeRefundPct*100, jinguiziTierLabel[enr.Tier]),
 			CreatedAt:     now,
 		})
-		out["gamecoin_balance_before"] = gbBefore
-		out["gamecoin_balance_after"] = gbAfter
+		out["gamecoin_balance_before"] = gbCurrent
+		out["gamecoin_balance_after"] = gbCurrent
 		out["fee_refund"] = res.FeeRefund
+		out["manual_pending_gamecoin"] = res.FeeRefund
 	}
 
-	// 2) 发放奖励 → 金龟子钱包(仅当触发)
-	jwBefore := 0.0
-	jwAfter := 0.0
+	// 2) 发放奖励 → 仅记 manual 流水, 不入金龟子钱包 (奖励由人工发放)
+	jwCurrent := 0.0
 	if res.Reward > 0 {
 		jw := s.mem.EnsureJinguiziWallet(uid)
-		jwBefore = jw.Balance
-		jwAfter = jwBefore + res.Reward
-		s.mem.UpdateJinguiziBalance(uid, jwAfter, jw.Frozen)
-		s.mem.AddJinguiziRecharged(uid, res.Reward)
+		jwCurrent = jw.Balance
+		// 平台政策: 达标奖励不再自动入金龟子钱包, 仅记一条 manual_* 流水.
+		// BalanceBefore == BalanceAfter == 当前余额, Amount>0 表示「待发放金额」.
 		s.mem.SaveJinguiziTransaction(uid, &common.JinguiziTransaction{
 			UserID:        uid,
 			OperatorID:    operatorID,
-			Type:          "contest_reward",
+			Type:          "contest_reward_manual",
 			Amount:        res.Reward,
-			BalanceBefore: jwBefore,
-			BalanceAfter:  jwAfter,
-			Remark:        fmt.Sprintf("选拔赛达标奖励(%s,盈利率%.1f%%)", jinguiziTierLabel[enr.Tier], returnPct*100),
+			BalanceBefore: jwCurrent,
+			BalanceAfter:  jwCurrent,
+			Remark:        fmt.Sprintf("[待人工发放] 选拔赛达标奖励(%s,盈利率%.1f%%)", jinguiziTierLabel[enr.Tier], returnPct*100),
 			CreatedAt:     now,
 		})
+		out["manual_pending_jinguizi"] = res.Reward
+	} else {
+		// 即便未达标也输出 jinguizi_balance_before/after 便于前端展示
+		jw := s.mem.EnsureJinguiziWallet(uid)
+		jwCurrent = jw.Balance
 	}
 	enr.Status = "settled"
 	enr.SettledAt = &now
@@ -586,8 +589,8 @@ func (s *JinguiziService) AdminSettle(c *gin.Context) {
 	out["reward"] = res.Reward
 	out["triggered"] = res.Triggered
 	out["reward_reason"] = res.Reason
-	out["jinguizi_balance_before"] = jwBefore
-	out["jinguizi_balance_after"] = jwAfter
+	out["jinguizi_balance_before"] = jwCurrent
+	out["jinguizi_balance_after"] = jwCurrent
 	out["enrollment_status"] = "settled"
 	common.Success(c, out)
 }
