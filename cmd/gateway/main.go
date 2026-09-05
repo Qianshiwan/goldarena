@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -375,6 +376,51 @@ func main() {
 		admin.GET("/messages/:user_id", msgSvc.ListUserMessages)
 		admin.POST("/messages/:user_id", msgSvc.ReplyAsPlatform)
 	}
+
+	// SEO endpoints — must be registered BEFORE the SPA NoRoute handler so
+	// search engines can see them as plain text/xml instead of getting the
+	// React bundle. Without these, /robots.txt and /sitemap.xml both get
+	// rewritten to index.html (a single-page JS app), which means crawlers
+	// never find our crawl rules or URL list.
+	seoSiteURL := "https://www.kinguizi.top"
+	router.GET("/robots.txt", func(c *gin.Context) {
+		c.Header("Content-Type", "text/plain; charset=utf-8")
+		c.String(http.StatusOK, `User-agent: *
+Allow: /
+Disallow: /api/
+Disallow: /admin/
+Sitemap: `+seoSiteURL+`/sitemap.xml
+`)
+	})
+	router.GET("/sitemap.xml", func(c *gin.Context) {
+		// 列出全部前台可访问的 SPA 路由,首页权重最高(1.0),功能页 0.8,用户中心 0.6。
+		// SPA 路由都是客户端跳转,所以 lastmod 用站点整体的最新版本时间(构建时静态化)。
+		now := time.Now().UTC().Format("2006-01-02")
+		pages := []struct {
+			Path  string
+			Score float64
+		}{
+			{"/", 1.0},
+			{"/trade", 0.9},
+			{"/contest-trade", 0.9},
+			{"/contest", 0.9},
+			{"/pnl", 0.7},
+			{"/jinguizi", 0.7},
+			{"/messages", 0.6},
+			{"/login", 0.5},
+			{"/register", 0.5},
+		}
+		var urls strings.Builder
+		urls.WriteString(`<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+`)
+		for _, p := range pages {
+			urls.WriteString("  <url>\n    <loc>" + seoSiteURL + p.Path + "</loc>\n    <lastmod>" + now + "</lastmod>\n    <changefreq>daily</changefreq>\n    <priority>" + strconv.FormatFloat(p.Score, 'f', 1, 64) + "</priority>\n  </url>\n")
+		}
+		urls.WriteString("</urlset>\n")
+		c.Header("Content-Type", "application/xml; charset=utf-8")
+		c.String(http.StatusOK, urls.String())
+	})
 
 	// Serve the built SPA (web/dist) so the whole app is reachable from one URL.
 	// Any non-API GET is served as a static file, falling back to index.html for
