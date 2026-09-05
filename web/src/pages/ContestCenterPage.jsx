@@ -153,9 +153,9 @@ export default function ContestCenterPage() {
           <div>
             <span className="text-gray-300">达标奖励：</span>
             <div className="mt-1 space-y-1">
-              <div>· 200元档(小账户100万)：6%退回管理费；盈利100%以上，奖励：奖金为（1+20%）*200=<span className="text-gold font-semibold">240元</span>。</div>
-              <div>· 1000元档(中账户 500万)：6%退回管理费；盈利100%以上，奖励：奖金为（1+20%*2）*1000=<span className="text-gold font-semibold">1400元</span>。</div>
-              <div>· 2000元档(大账户1000万)：6%退回管理费；盈利100%以上，奖励：奖金为（2+20%*3）*2000=<span className="text-gold font-semibold">5200元</span>。</div>
+              <div>· 200元档(小账户100万)：盈利6%以上退回管理费；盈利100%以上，奖励：奖金为（1+20%）*200=<span className="text-gold font-semibold">240元</span>。</div>
+              <div>· 1000元档(中账户 500万)：盈利6%以上退回管理费；盈利100%以上，奖励：奖金为（1+20%*2）*1000=<span className="text-gold font-semibold">1400元</span>。</div>
+              <div>· 2000元档(大账户1000万)：盈利6%以上退回管理费；盈利100%以上，奖励：奖金为（2+20%*3）*2000=<span className="text-gold font-semibold">5200元</span>。</div>
             </div>
           </div>
         </div>
