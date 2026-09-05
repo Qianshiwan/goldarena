@@ -152,9 +152,11 @@ export default function ContestCenterPage() {
           </div>
           <div>
             <span className="text-gray-300">达标奖励：</span>
-            奖励 =（档位基数 + 20% × 档位系数）× 管理费，按三档固定额发放。基数 小 1 / 中 1 / 大 2，系数 小 1 / 中 2 / 大 3，
-            管理费 小¥200 / 中¥1000 / 大¥2000；<span className="text-gold font-semibold">触发线: 盈利 ≥ 100%</span>，达标奖励小账户 ¥240 / 中账户 ¥1400 / 大账户 ¥5200，
-            未达标仅退 6% 管理费(¥12 / ¥60 / ¥120)。
+            <div className="mt-1 space-y-1">
+              <div>· 200元档(小账户100万)：6%退回管理费；盈利100%以上，奖励：奖金为（1+20%）*200=<span className="text-gold font-semibold">240元</span>。</div>
+              <div>· 1000元档(中账户 500万)：6%退回管理费；盈利100%以上，奖励：奖金为（1+20%*2）*1000=<span className="text-gold font-semibold">1400元</span>。</div>
+              <div>· 2000元档(大账户1000万)：6%退回管理费；盈利100%以上，奖励：奖金为（2+20%*3）*2000=<span className="text-gold font-semibold">5200元</span>。</div>
+            </div>
           </div>
         </div>
       </div>
