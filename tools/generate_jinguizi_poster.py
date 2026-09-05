@@ -7,7 +7,7 @@
 import os
 from PIL import Image, ImageDraw, ImageFont, ImageFilter
 
-WIDTH, HEIGHT = 1080, 2580
+WIDTH, HEIGHT = 1080, 2720
 OUT_PATH = "D:/tools/Jinguizigoldtrader/金龟子黄金现货模拟选拔赛海报.png"
 LOGO_PATH = "D:/tools/Jinguizigoldtrader/金龟子商标.png"
 
@@ -183,7 +183,6 @@ def main():
     cy += 10
 
     # 2. 达标奖励
-    cy = draw_section_header(draw, margin, cy, content_w, "2  达标奖励", fonts)
     reward_texts = [
         "奖励公式：达标奖励 = (档位基数 + 账户盈利率 × 档位系数) × 管理费；三档均额外退回 6% 管理费。",
         "档位基数：小=0 / 中=1 / 大=2；档位系数：小=1 / 中=2 / 大=3；管理费：小 200 / 中 1000 / 大 2000 元。",
@@ -201,10 +200,21 @@ def main():
         "  达标奖励 = (2 + 账户盈利率 × 3) × 2000元；另退 6% 管理费 120元。",
         "  例：盈利率 20% → 奖金 (2 + 20%×3) × 2000 = 5200元。",
     ]
+    # 先测量文本块高度，再绘制金色背景框
+    measure_draw = ImageDraw.Draw(Image.new("RGB", (WIDTH, HEIGHT)))
+    block_h = 0
+    for t in reward_texts:
+        h = draw_text_wrap(measure_draw, t, margin + 20, 0, content_w - 40, fonts["body"], WHITE, line_spacing=6)
+        block_h += h + 8
+    panel_top = cy
+    panel_h = block_h + 86
+    draw.rounded_rectangle([margin, panel_top, WIDTH - margin, panel_top + panel_h], radius=16, outline=GOLD, width=2, fill=PANEL_BG)
+    draw.text((margin + 18, panel_top + 16), "2  达标奖励", font=fonts["section"], fill=GOLD_LIGHT)
+    cy = panel_top + 72
     for t in reward_texts:
         h = draw_text_wrap(draw, t, margin + 20, cy, content_w - 40, fonts["body"], WHITE, line_spacing=6)
         cy += h + 8
-    cy += 10
+    cy = panel_top + panel_h + 24
 
     # 3. 淘汰条件（新增）
     cy = draw_section_header(draw, margin, cy, content_w, "3  淘汰条件", fonts)
