@@ -60,6 +60,17 @@ export default function ContestTradePage() {
     )
   }
 
+  // user 还没就绪（典型 reload 后 useAuthStore.user=null,等 App.jsx 自动
+  // fetchProfile 完成前）— 此时 contestId=undefined 会让 PositionList
+  // 退化为查游戏币钱包,显示错误的持仓。先阻塞渲染直到 user.id 真实可用。
+  if (!user || !user.id) {
+    return (
+      <div className="space-y-3">
+        <div className="trade-card p-10 text-center text-gray-500">正在恢复用户会话…</div>
+      </div>
+    )
+  }
+
   // 未报名 / 已结算 / 已淘汰：禁用交易，给出引导
   const canTrade = enrollment && enrollment.status === 'active'
   const status = enrollment?.status

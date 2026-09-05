@@ -1,3 +1,4 @@
+import { useEffect } from 'react'
 import { Routes, Route, Navigate } from 'react-router-dom'
 import useAuthStore from './stores/authStore'
 import Navbar from './components/layout/Navbar'
@@ -34,6 +35,19 @@ function AdminRoute({ children }) {
 }
 
 export default function App() {
+  // 启动时若 token 还在但 user 为空（典型 reload 场景）,
+  // 自动调用 fetchProfile 恢复用户信息。否则 ContestTradePage
+  // 等依赖 user.id 的页面会因 user=null 退化成 contestId=undefined,
+  // PositionList 会拉错钱包的持仓（金龟子页面拉到游戏币持仓）。
+  const token = useAuthStore((s) => s.token)
+  const user = useAuthStore((s) => s.user)
+  const fetchProfile = useAuthStore((s) => s.fetchProfile)
+  useEffect(() => {
+    if (token && !user) {
+      fetchProfile()
+    }
+  }, [token, user, fetchProfile])
+
   return (
     <div className="min-h-screen bg-dark-200">
       <Navbar />
