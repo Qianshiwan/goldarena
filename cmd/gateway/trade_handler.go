@@ -508,7 +508,7 @@ func (s *TradeService) GetTradePnL(c *gin.Context) {
 			return closed[i].ClosedAt.After(*closed[j].ClosedAt)
 		})
 		totalPnL := 0.0
-		var trades []gin.H
+		trades := []gin.H{}
 		for _, p := range closed {
 			totalPnL += p.FloatingPnL
 			var closedAt *time.Time

@@ -8,6 +8,8 @@ import RegisterPage from './pages/RegisterPage'
 import WalletPage from './pages/WalletPage'
 import JinguiziWalletPage from './pages/JinguiziWalletPage'
 import CultivationPage from './pages/CultivationPage'
+import ContestCenterPage from './pages/ContestCenterPage'
+import ProfitStatsPage from './pages/ProfitStatsPage'
 import AdminLayout from './pages/admin/AdminLayout'
 import AdminDashboard from './pages/admin/AdminDashboard'
 import AdminUsers from './pages/admin/AdminUsers'
@@ -41,6 +43,8 @@ export default function App() {
           <Route path="/wallet" element={<PrivateRoute><WalletPage /></PrivateRoute>} />
           <Route path="/jinguizi" element={<PrivateRoute><JinguiziWalletPage /></PrivateRoute>} />
           <Route path="/cultivation" element={<PrivateRoute><CultivationPage /></PrivateRoute>} />
+          <Route path="/contest" element={<PrivateRoute><ContestCenterPage /></PrivateRoute>} />
+          <Route path="/pnl" element={<PrivateRoute><ProfitStatsPage /></PrivateRoute>} />
           <Route path="/admin" element={<AdminRoute><AdminLayout /></AdminRoute>}>
             <Route index element={<AdminDashboard />} />
             <Route path="users" element={<AdminUsers />} />

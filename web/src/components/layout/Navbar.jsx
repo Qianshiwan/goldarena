@@ -31,6 +31,12 @@ export default function Navbar() {
               <Link to="/jinguizi" className="text-gold hover:text-yellow-300 transition-colors text-sm font-semibold">
                 金龟子币
               </Link>
+              <Link to="/contest" className="text-gray-300 hover:text-gold transition-colors text-sm">
+                赛事中心
+              </Link>
+              <Link to="/pnl" className="text-gray-300 hover:text-gold transition-colors text-sm">
+                盈亏统计
+              </Link>
               {user?.role === 'admin' && (
                 <Link to="/admin" className="text-gold hover:text-yellow-300 transition-colors text-sm font-semibold">
                   管理后台

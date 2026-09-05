@@ -203,11 +203,17 @@ export default function DashboardPage() {
                 <span className="text-2xl">🔮</span>
                 <span className="text-sm group-hover:text-gold transition-colors">交易境界</span>
               </button>
-              <button className="flex flex-col items-center gap-2 p-4 bg-dark-bg rounded-xl border border-gray-800 hover:border-gold/50 transition-all duration-200 group">
+              <button
+                onClick={() => navigate('/contest')}
+                className="flex flex-col items-center gap-2 p-4 bg-dark-bg rounded-xl border border-gray-800 hover:border-gold/50 transition-all duration-200 group"
+              >
                 <span className="text-2xl">🏆</span>
                 <span className="text-sm group-hover:text-gold transition-colors">赛事中心</span>
               </button>
-              <button className="flex flex-col items-center gap-2 p-4 bg-dark-bg rounded-xl border border-gray-800 hover:border-gold/50 transition-all duration-200 group">
+              <button
+                onClick={() => navigate('/pnl')}
+                className="flex flex-col items-center gap-2 p-4 bg-dark-bg rounded-xl border border-gray-800 hover:border-gold/50 transition-all duration-200 group"
+              >
                 <span className="text-2xl">📈</span>
                 <span className="text-sm group-hover:text-gold transition-colors">盈亏统计</span>
               </button>
