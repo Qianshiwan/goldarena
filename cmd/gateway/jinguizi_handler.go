@@ -50,19 +50,23 @@ var jinguiziStageTargets = []struct {
 	{6, 0.29}, // 6月 ≥ 29% (赛期终点)
 }
 
-// jinguiziRewardCoeff defines the 选拔赛达标奖励 formula per tier:
-//   reward = (Base + ReturnPct × Coeff) × Fee,   triggered when ReturnPct >= Trigger
-// Trigger / Base / Coeff are all set so that hitting the trigger exactly gives a
-// reward equal to 1× the management fee (so the user's "minimum profitable exit"
-// is also the lowest reward tier). Higher returnPct then scales linearly per
-// tier's Coeff. 触发线 ≥ 20% applies to every tier.
+// jinguiziRewardCoeff defines the 选拔赛达标奖励 formula per tier. The bonus is a
+// FIXED amount granted once the participant clears the 触发线 (returnPct >= Trigger,
+// i.e. 盈利 ≥ 100%). 触发后奖金 = (Base + jinguiziRewardConstPct × Coeff) × Fee;
+// 其中的 20% 是固定系数(见 jinguiziRewardConstPct), 不随实际盈利率变动.
+// Base / Coeff / Fee 见下表. 触发线 盈利 ≥ 100% 对所有档位一致.
 var jinguiziRewardCoeff = map[string]struct {
 	Base, Coeff, Trigger float64
 }{
-	JinguiziTierSmall:  {Base: 1, Coeff: 1, Trigger: 0.20}, // (1 + 1×r) × 200
-	JinguiziTierMedium: {Base: 1, Coeff: 2, Trigger: 0.20}, // (1 + 2×r) × 1000
-	JinguiziTierLarge:  {Base: 2, Coeff: 3, Trigger: 0.20}, // (2 + 3×r) × 2000
+	JinguiziTierSmall:  {Base: 1, Coeff: 1, Trigger: 1.00}, // (1 + 20%×1) × 200  = 240
+	JinguiziTierMedium: {Base: 1, Coeff: 2, Trigger: 1.00}, // (1 + 20%×2) × 1000 = 1400
+	JinguiziTierLarge:  {Base: 2, Coeff: 3, Trigger: 1.00}, // (2 + 20%×3) × 2000 = 5200
 }
+
+// jinguiziRewardConstPct is the FIXED percent used in the 达标奖励 bonus once the
+// 触发线 is cleared: bonus = (Base + jinguiziRewardConstPct × Coeff) × Fee. It is
+// NOT the participant's actual returnPct — the bonus is a fixed amount per tier.
+const jinguiziRewardConstPct = 0.20
 
 // jinguiziFeeRefundPct is the fraction of the 管理费 refunded back to the
 // participant's 游戏币 wallet on a successful settle (达标 or 未达 trigger 都退).
@@ -73,14 +77,15 @@ const jinguiziFeeRefundPct = 0.06
 // to credit into the 金龟子 wallet, and whether the reward trigger fired.
 type jinguiziRewardResult struct {
 	FeeRefund float64 // 6% of 管理费 → 游戏币钱包
-	Reward    float64 // (Base + r*Coeff)*Fee → 金龟子钱包 (0 if 未达触发线)
+	Reward    float64 // (Base + 20%*Coeff)*Fee 固定奖金 → 金龟子钱包 (0 if 未达触发线)
 	Triggered bool    // true if ReturnPct >= Trigger (reward fired)
-	Reason    string  // human-readable summary, e.g. "达标奖励: 公式(1+25%×2)*1000=1500元"
+	Reason    string  // human-readable summary, e.g. "达标奖励: (1+20%×2)×¥1000 = ¥1400"
 }
 
 // calculateJinguiziReward applies the 选拔赛 settlement formula to a tier at a
 // given cumulative returnPct. refund always equals fee × jinguiziFeeRefundPct (6%).
-// reward is only non-zero when the per-tier trigger (≥20%) is cleared.
+// reward is only non-zero when the per-tier trigger (盈利 ≥ 100%) is cleared, and is
+// then a FIXED amount (Base + 20% × Coeff) × Fee independent of the exact returnPct.
 func calculateJinguiziReward(tier string, returnPct float64) jinguiziRewardResult {
 	fee := jinguiziTierFee[tier]
 	res := jinguiziRewardResult{
@@ -96,11 +101,11 @@ func calculateJinguiziReward(tier string, returnPct float64) jinguiziRewardResul
 			jinguiziFeeRefundPct*100, res.FeeRefund, returnPct*100, c.Trigger*100)
 		return res
 	}
-	res.Reward = (c.Base + returnPct*c.Coeff) * fee
+	res.Reward = (c.Base + jinguiziRewardConstPct*c.Coeff) * fee
 	res.Triggered = true
-	res.Reason = fmt.Sprintf("退管理费%.0f%%=¥%.0f;达标奖励: (%.0f+%.1f%%×%d)×¥%.0f = ¥%.0f",
+	res.Reason = fmt.Sprintf("退管理费%.0f%%=¥%.0f;达标奖励: (%.0f+%.0f%%×%d)×¥%.0f = ¥%.0f",
 		jinguiziFeeRefundPct*100, res.FeeRefund,
-		c.Base, returnPct*100, int(c.Coeff), fee, res.Reward)
+		c.Base, jinguiziRewardConstPct*100, int(c.Coeff), fee, res.Reward)
 	return res
 }
 

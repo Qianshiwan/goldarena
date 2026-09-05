@@ -302,10 +302,10 @@ export default function AdminJinguizi() {
             {settleAction === 'settle' && (
               <div className="p-2 rounded bg-dark-200 border border-gray-700/50 text-[11px] text-gray-400 leading-relaxed">
                 <div className="font-semibold text-gray-300 mb-1">奖励公式（按档位自动计算,无需手填）</div>
-                <div>小账户(200元): <span className="font-mono text-gold">(1 + 盈利率×1) × 200</span></div>
-                <div>中账户(1000元): <span className="font-mono text-gold">(1 + 盈利率×2) × 1000</span></div>
-                <div>大账户(2000元): <span className="font-mono text-gold">(2 + 盈利率×3) × 2000</span></div>
-                <div className="mt-1 text-cyan-300">触发线: 盈利率 ≥ 20%；未达标仅退 6% 管理费,无奖励</div>
+                <div>小账户(200元): <span className="font-mono text-gold">(1 + 20%×1) × 200 = 240</span></div>
+                <div>中账户(1000元): <span className="font-mono text-gold">(1 + 20%×2) × 1000 = 1400</span></div>
+                <div>大账户(2000元): <span className="font-mono text-gold">(2 + 20%×3) × 2000 = 5200</span></div>
+                <div className="mt-1 text-cyan-300">触发线: 盈利 ≥ 100%；未达标仅退 6% 管理费,无奖励</div>
               </div>
             )}
             <button
