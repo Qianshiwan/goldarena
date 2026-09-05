@@ -154,7 +154,8 @@ export default function JinguiziWalletPage() {
           </div>
           <p className="text-xs text-gray-500 leading-relaxed mt-3">
             参赛资金为选拔赛专用「金龟子模拟币」，与平台普通游戏币完全隔离，专款专用；
-            比赛结束后的达标奖励和 6% 管理费退款，<strong className="text-gold">均不自动入账</strong>，
+            比赛结束后的<strong className="text-gold">达标奖励为现金</strong>(非金龟子币, 达标后平台会发消息通知您)，
+            6% 管理费退款同样是现金人工发放；两者<strong className="text-gold">均不自动入账</strong>，
             由管理员按规则核算后<strong className="text-gold">线下人工发放</strong>。
           </p>
         </div>

@@ -85,8 +85,8 @@ const jinguiziFeeRefundTrigger = 0.06
 // the cash portion to refund to the 游戏币 wallet, the bonus portion (if any)
 // to credit into the 金龟子 wallet, and which gates fired.
 type jinguiziRewardResult struct {
-	FeeRefund          float64 // 6% of 管理费 → 游戏币钱包 (0 if returnPct < 6%)
-	Reward             float64 // (Base + 20%*Coeff)*Fee 固定奖金 → 金龟子钱包 (0 if 未达 100% 触发线)
+	FeeRefund          float64 // 6% of 管理费 → 游戏币钱包手动流水 (0 if returnPct < 6%)
+	Reward             float64 // (Base + 20%*Coeff)*Fee 固定奖金 → 现金人工发放(发消息通知用户) (0 if 未达 100% 触发线)
 	Triggered          bool    // true if ReturnPct >= 100% 触发线 (bonus fired)
 	FeeRefundTriggered bool    // true if ReturnPct >= 6% 退管理费触发线
 	Reason             string  // human-readable summary, e.g. "退6%(¥120)+达标5200"
@@ -479,8 +479,8 @@ type AdminSettleJinguiziReq struct {
 //   - settle:    computes the current cumulative returnPct = (equity-initial)/initial,
 //     then computes the per-tier reward via calculateJinguiziReward (触发线 ≥ 100%).
 //     ⚠️ 【只入金不出金, 奖励由人工发放】结算时**不**自动入游戏币/金龟子钱包,
-//     仅写两条 manual_* 流水(type=contest_fee_refund_manual / contest_reward_manual),
-//     BalanceBefore==BalanceAfter==当前余额,记录待人工发放金额;管理员可按流水线下发放.
+//     仅写一条 manual 流水(type=contest_fee_refund_manual)记录待人工发放的 6% 管理费退款,
+//     而**达标奖励不再写金龟子钱包流水**(奖励为现金, 不是金龟子币), 改为向用户发送达标通知消息.
 //     Marks settled either way.
 func (s *JinguiziService) AdminSettle(c *gin.Context) {
 	operatorID := c.GetInt64("user_id")
@@ -569,28 +569,27 @@ func (s *JinguiziService) AdminSettle(c *gin.Context) {
 		out["manual_pending_gamecoin"] = res.FeeRefund
 	}
 
-	// 2) 发放奖励 → 仅记 manual 流水, 不入金龟子钱包 (奖励由人工发放)
+	// 2) 达标奖励 → 不再写金龟子钱包流水(奖励为现金, 由人工线下发放, 不是金龟子币),
+	//    改为向用户发送达标通知消息。响应 manual_pending_jinguizi 保留供管理员结算面板参考.
 	jwCurrent := 0.0
+	jw := s.mem.EnsureJinguiziWallet(uid)
+	jwCurrent = jw.Balance
 	if res.Reward > 0 {
-		jw := s.mem.EnsureJinguiziWallet(uid)
-		jwCurrent = jw.Balance
-		// 平台政策: 达标奖励不再自动入金龟子钱包, 仅记一条 manual_* 流水.
-		// BalanceBefore == BalanceAfter == 当前余额, Amount>0 表示「待发放金额」.
-		s.mem.SaveJinguiziTransaction(uid, &common.JinguiziTransaction{
-			UserID:        uid,
-			OperatorID:    operatorID,
-			Type:          "contest_reward_manual",
-			Amount:        res.Reward,
-			BalanceBefore: jwCurrent,
-			BalanceAfter:  jwCurrent,
-			Remark:        fmt.Sprintf("[待人工发放] 选拔赛达标奖励(%s,盈利率%.1f%%)", jinguiziTierLabel[enr.Tier], returnPct*100),
-			CreatedAt:     now,
+		msgParts := []string{}
+		if res.FeeRefund > 0 {
+			msgParts = append(msgParts, fmt.Sprintf("6%%管理费退款 ¥%.0f 元", res.FeeRefund))
+		}
+		msgParts = append(msgParts, fmt.Sprintf("达标奖励 ¥%.0f 元", res.Reward))
+		msgContent := fmt.Sprintf("🎉 恭喜您通过金龟子选拔赛达标(盈利率%.1f%%)！%s，均为现金，由管理员人工发放，请留意线下联系。",
+			returnPct*100, strings.Join(msgParts, "、"))
+		s.mem.SaveMessage(&common.Message{
+			UserID:    uid,
+			Sender:    "platform",
+			Content:   msgContent,
+			Read:      false,
+			CreatedAt: now,
 		})
 		out["manual_pending_jinguizi"] = res.Reward
-	} else {
-		// 即便未达标也输出 jinguizi_balance_before/after 便于前端展示
-		jw := s.mem.EnsureJinguiziWallet(uid)
-		jwCurrent = jw.Balance
 	}
 	enr.Status = "settled"
 	enr.SettledAt = &now

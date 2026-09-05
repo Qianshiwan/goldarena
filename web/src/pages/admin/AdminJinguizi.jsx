@@ -130,10 +130,10 @@ export default function AdminJinguizi() {
         const triggered = d.triggered ? '✅ 达标奖励' : '⚠️ 未达触发线(仅退管理费)'
         setMsg(
           `结算成功：用户 ${d.user_id} · 档位 ${d.tier} · 盈利率 ${ret}% · ${triggered}\n` +
-          `  · 退游戏币 ¥${refund} · 奖励金龟子币 ${reward}\n` +
+          `  · 退管理费 ¥${refund}(已记游戏币 manual 流水, 需人工发放)\n` +
+          `  · 达标奖励 ¥${reward}(现金, 非金龟子币, 已发消息通知用户, 需人工线下发放)\n` +
           `  · 公式: ${d.reward_reason}\n` +
-          `  · ⚠️ 平台只入金不出金, 奖励/退款已记为 manual 流水, 游戏币与金龟子钱包余额均未自动入账,\n` +
-          `     请管理员在用户钱包页面按流水人工线下发放。`
+          `  · ⚠️ 平台只入金不出金, 奖励/退款均未自动入账, 请管理员按上述金额/消息线下发放。`
         )
       }
       setSettleTarget('')
@@ -301,7 +301,7 @@ export default function AdminJinguizi() {
                 onChange={(e) => setSettleAction(e.target.value)}
                 className="w-full bg-dark-200 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-200"
               >
-                <option value="settle">达标结算（按公式算奖励 + 退 6% 管理费, 仅记 manual 流水, 需人工发放）</option>
+                <option value="settle">达标结算（按公式算奖励 + 退 6% 管理费, 奖励发消息通知, 需人工发放）</option>
                 <option value="eliminate">淘汰（收回参赛资金）</option>
               </select>
             </div>
@@ -312,10 +312,11 @@ export default function AdminJinguizi() {
                 <div>中账户(1000元): <span className="font-mono text-gold">(1 + 20%×2) × 1000 = 1400</span></div>
                 <div>大账户(2000元): <span className="font-mono text-gold">(2 + 20%×3) × 2000 = 5200</span></div>
                 <div className="mt-1 text-cyan-300">退管理费: 盈利 ≥ <span className="text-gold">6%</span> 才退 6% (¥12 / ¥60 / ¥120); 奖励: 盈利 ≥ 100% 触发,固定额</div>
-                <div className="mt-2 text-amber-300 font-semibold">
+                <div className="mt-3 text-amber-300 font-semibold">
                   ⚠️ 平台政策: 只入金不出金, 奖励/退款均<strong>不自动入账</strong>。
-                  本次结算仅写入 manual 流水(type=contest_reward_manual / contest_fee_refund_manual),
-                  余额前后相等。请按流水记录<strong>线下联系用户发放</strong>。
+                  退管理费(6%)仅写入游戏币 manual 流水(type=contest_fee_refund_manual), 余额前后相等;
+                  达标奖励为<strong>现金</strong>(非金龟子币), 不写钱包流水, <strong>自动向用户发送达标通知消息</strong>。
+                  请按金额/消息<strong>线下联系用户发放</strong>。
                 </div>
               </div>
             )}
