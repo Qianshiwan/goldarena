@@ -103,12 +103,24 @@ export const jinguiziAPI = {
   getWallet: () => api.get('/jinguizi/wallet'),
   getTransactions: (params) => api.get('/jinguizi/transactions', { params }),
   getEnrollment: () => api.get('/jinguizi/enrollment'),
+  // 缴费报名：创建报名费支付订单 { tier: small|medium|large, channel }
+  createEnrollOrder: (tier, channel) => api.post('/jinguizi/enroll-order', { tier, channel }),
   adminList: (params) => api.get('/admin/jinguizi/list', { params }),
   adminRecharge: (payload) => api.post('/admin/jinguizi/recharge', payload),
   adminAdjust: (payload) => api.post('/admin/jinguizi/adjust', payload),
   adminEnroll: (payload) => api.post('/admin/jinguizi/enroll', payload),
   adminSettle: (payload) => api.post('/admin/jinguizi/settle', payload),
   adminJudge: () => api.post('/admin/jinguizi/judge'),
+}
+
+// ========== 应用内留言（平台 ↔ 用户双向） ==========
+export const messageAPI = {
+  list: () => api.get('/messages'),
+  send: (content) => api.post('/messages', { content }),
+  unread: () => api.get('/messages/unread'),
+  adminConversations: () => api.get('/admin/messages'),
+  adminThread: (userId) => api.get(`/admin/messages/${userId}`),
+  adminReply: (userId, content) => api.post(`/admin/messages/${userId}`, { content }),
 }
 
 // ========== Admin API (平台管理后台) ==========

@@ -1,7 +1,9 @@
-import { useEffect, useState } from 'react'
-import { jinguiziAPI } from '../services/api'
+import { useEffect, useRef, useState } from 'react'
+import { jinguiziAPI, paymentAPI } from '../services/api'
 
 const tierLabel = { small: '小账户 (100万)', medium: '中账户 (500万)', large: '大账户 (1000万)' }
+const tierFee = { small: 200, medium: 1000, large: 2000 }
+const tierCapital = { small: '100万金龟子币', medium: '500万金龟子币', large: '1000万金龟子币' }
 const statusLabel = { active: '参赛中', settled: '已结算', eliminated: '已淘汰' }
 
 // 阶段门槛（与海报文案、后端 jinguiziStageTargets 一致）
@@ -37,8 +39,15 @@ export default function ContestCenterPage() {
   const [equity, setEquity] = useState(null)
   const [loading, setLoading] = useState(true)
 
+  // 缴费报名流程状态
+  const [payModal, setPayModal] = useState(null) // { order, qr_content, pay_url, sandbox, tier }
+  const [creating, setCreating] = useState(false)
+  const [payError, setPayError] = useState('')
+  const pollRef = useRef(null)
+
   useEffect(() => {
     loadAll()
+    return () => { if (pollRef.current) clearInterval(pollRef.current) }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -53,6 +62,49 @@ export default function ContestCenterPage() {
       setEquity(e.data.data?.equity || null)
     } catch {}
     setLoading(false)
+  }
+
+  // 创建报名费订单
+  const startEnroll = async (tier) => {
+    if (creating) return
+    setCreating(true)
+    setPayError('')
+    try {
+      const { data } = await jinguiziAPI.createEnrollOrder(tier)
+      const d = data.data
+      setPayModal({ ...d, tier })
+      // 轮询报名状态：支付成功后端自动报名
+      if (pollRef.current) clearInterval(pollRef.current)
+      pollRef.current = setInterval(async () => {
+        try {
+          const e = await jinguiziAPI.getEnrollment()
+          if (e.data.data?.enrollment?.status === 'active') {
+            clearInterval(pollRef.current)
+            pollRef.current = null
+            setPayModal(null)
+            loadAll()
+          }
+        } catch {}
+      }, 3000)
+    } catch (e) {
+      setPayError(e?.response?.data?.message || '创建订单失败，请稍后再试')
+    } finally {
+      setCreating(false)
+    }
+  }
+
+  // 沙箱模式：模拟支付成功
+  const simulatePay = async () => {
+    if (!payModal?.order?.out_trade_no) return
+    try {
+      await paymentAPI.simulate(payModal.order.out_trade_no)
+    } catch {}
+  }
+
+  const closePayModal = () => {
+    if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null }
+    setPayModal(null)
+    loadAll()
   }
 
   if (loading) return <div className="max-w-4xl mx-auto p-10 text-center text-gray-500">加载中…</div>
@@ -100,7 +152,8 @@ export default function ContestCenterPage() {
           </div>
           <div>
             <span className="text-gray-300">达标奖励：</span>
-            奖励 =（档位基数 + 账户盈利率）× 管理费 200 元（小/中/大基数 0/1/2），三档均另退 6% 管理费。
+            奖励 =（档位基数 + 账户盈利率 × 档位系数）× 管理费。基数 小0 / 中1 / 大2，系数 小1 / 中2 / 大3，
+            管理费 小¥200 / 中¥1000 / 大¥2000；三档均另退 6% 管理费（¥12 / ¥60 / ¥120）。
           </div>
         </div>
       </div>
@@ -211,15 +264,83 @@ export default function ContestCenterPage() {
             </div>
           )}
           <div className="trade-card p-4 text-center text-sm text-gray-400">
-            本次参赛已{statusLabel[enrollment.status] || enrollment.status}。如需再次参赛，请联系管理员重新报名。
+            本次参赛已{statusLabel[enrollment.status] || enrollment.status}。如需再次参赛，可重新缴费报名。
           </div>
         </div>
       ) : (
-        <div className="trade-card p-6 text-center">
-          <p className="text-gray-400 text-sm mb-2">你尚未报名参赛</p>
-          <p className="text-xs text-gray-500">
-            选拔赛由管理员统一报名。请联系管理员报名对应档位，开启你的模拟选拔之旅。
-          </p>
+        <div className="space-y-4">
+          <h2 className="text-lg font-semibold text-gray-200">缴费报名</h2>
+          <div className="trade-card p-6">
+            <p className="text-gray-400 text-sm mb-4">
+              选择参赛档位并支付报名费（管理费），支付成功后系统自动开通参赛账户并发放对应参赛资金。
+            </p>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              {['small', 'medium', 'large'].map((t) => (
+                <div key={t} className="rounded-xl border border-gold/30 bg-dark-bg p-4 flex flex-col gap-2">
+                  <div className="text-sm font-semibold text-gold">{tierLabel[t]}</div>
+                  <div className="text-2xl font-bold text-gray-100">¥{tierFee[t]}</div>
+                  <div className="text-xs text-gray-500">参赛资金：{tierCapital[t]}</div>
+                  <button
+                    onClick={() => startEnroll(t)}
+                    disabled={creating}
+                    className="btn-gold text-sm py-2 rounded-lg font-semibold disabled:opacity-40"
+                  >
+                    {creating ? '创建订单中…' : '缴费报名'}
+                  </button>
+                </div>
+              ))}
+            </div>
+            {payError && <p className="text-red-400 text-xs mt-3">{payError}</p>}
+            <p className="text-xs text-gray-500 mt-4">
+              报名费即赛事管理费，达标结算时退还 6%（小/中/大分别退 ¥12 / ¥60 / ¥120）。
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* 支付弹窗 */}
+      {payModal && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50" onClick={closePayModal}>
+          <div
+            className="trade-card p-6 w-[360px] max-w-[92vw] space-y-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="text-base font-semibold text-gold text-center">
+              缴费报名 · {tierLabel[payModal.tier]}
+            </h3>
+            <div className="text-center text-2xl font-bold text-gray-100">¥{payModal.fee ?? tierFee[payModal.tier]}</div>
+            {payModal.qr_content && (
+              <div className="flex justify-center">
+                <img
+                  src={paymentAPI.qrURL(payModal.qr_content)}
+                  alt="支付二维码"
+                  className="w-48 h-48 rounded-lg bg-white p-1"
+                />
+              </div>
+            )}
+            <p className="text-xs text-gray-400 text-center leading-relaxed">
+              {payModal.sandbox
+                ? '沙箱模式：点击下方按钮模拟支付成功，验证缴费报名全流程。'
+                : '请使用微信扫码支付。支付成功后系统将自动为你报名并发放参赛资金。'}
+            </p>
+            {payModal.sandbox && (
+              <button
+                onClick={simulatePay}
+                className="btn-gold w-full py-2 rounded-lg text-sm font-semibold"
+              >
+                模拟支付成功
+              </button>
+            )}
+            <div className="text-[10px] text-gray-600 text-center">
+              订单号 {payModal.order?.out_trade_no} · 支付状态自动检测中…
+            </div>
+            <button
+              onClick={closePayModal}
+              className="w-full py-2 rounded-lg text-sm text-gray-400 hover:text-gray-200 border border-gray-700"
+            >
+              关闭
+            </button>
+          </div>
         </div>
       )}
     </div>

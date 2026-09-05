@@ -26,10 +26,13 @@ type PaymentOrder struct {
 	GameCoins  float64    `json:"game_coins"`
 	Status     string     `json:"status"`
 	Provider   string     `json:"provider"`
-	QRContent  string     `json:"qr_content,omitempty"`
-	PayURL     string     `json:"pay_url,omitempty"`
-	CreatedAt  time.Time  `json:"created_at"`
-	PaidAt     *time.Time `json:"paid_at,omitempty"`
+	// Product distinguishes what the order buys: "gamecoin" (default, credit
+	// game-coin wallet) or "contest_<tier>" (金龟子选拔赛缴费报名, auto-enroll on pay).
+	Product   string     `json:"product,omitempty"`
+	QRContent string     `json:"qr_content,omitempty"`
+	PayURL    string     `json:"pay_url,omitempty"`
+	CreatedAt time.Time  `json:"created_at"`
+	PaidAt    *time.Time `json:"paid_at,omitempty"`
 }
 
 // ---- MemoryStore fields (added alongside the other maps) ----
@@ -87,13 +90,13 @@ func (m *MemoryStore) persistPaymentOrder(o *PaymentOrder) {
 	m.dbMu.Lock()
 	defer m.dbMu.Unlock()
 	_, err := m.db.Exec(`INSERT INTO ga_payment_orders
-		(out_trade_no,id,user_id,channel,amount_rmb,game_coins,status,provider,qr_content,pay_url,created_at,paid_at)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+		(out_trade_no,id,user_id,channel,amount_rmb,game_coins,status,provider,product,qr_content,pay_url,created_at,paid_at)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(out_trade_no) DO UPDATE SET
-		id=excluded.id,user_id=excluded.user_id,channel=excluded.channel,amount_rmb=excluded.amount_rmb,
-		game_coins=excluded.game_coins,status=excluded.status,provider=excluded.provider,
-		qr_content=excluded.qr_content,pay_url=excluded.pay_url,created_at=excluded.created_at,paid_at=excluded.paid_at`,
-		o.OutTradeNo, o.ID, o.UserID, o.Channel, o.AmountRMB, o.GameCoins, o.Status, o.Provider,
+			id=excluded.id,user_id=excluded.user_id,channel=excluded.channel,amount_rmb=excluded.amount_rmb,
+			game_coins=excluded.game_coins,status=excluded.status,provider=excluded.provider,product=excluded.product,
+			qr_content=excluded.qr_content,pay_url=excluded.pay_url,created_at=excluded.created_at,paid_at=excluded.paid_at`,
+		o.OutTradeNo, o.ID, o.UserID, o.Channel, o.AmountRMB, o.GameCoins, o.Status, o.Provider, o.Product,
 		o.QRContent, o.PayURL, fmtTime(o.CreatedAt), nullTime(o.PaidAt))
 	if err != nil {
 		log.Printf("WARN persistPaymentOrder(%s): %v", o.OutTradeNo, err)

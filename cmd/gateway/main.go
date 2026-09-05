@@ -244,6 +244,11 @@ func main() {
 
 	// 游戏币兑换率：¥1 = 1000 游戏币
 	paySvc := NewPaymentService(memStore, payProv, paySandbox, 1000.0, payNotifyBase, payGateway, payPID, payKey)
+	// 缴费报名：支付成功后自动报名金龟子选拔赛
+	paySvc.jzSvc = jinguiziSvc
+
+	// 应用内留言（平台与用户双向）
+	msgSvc := NewMessageService(memStore, userSvc)
 
 	// Start market data polling
 	go marketSvc.Start(ctx)
@@ -323,6 +328,11 @@ func main() {
 		// WebSocket (trading data feed)
 		authed.GET("/ws", marketSvc.WebSocketHandler)
 
+		// 应用内留言（平台 ↔ 用户）
+		authed.GET("/messages", msgSvc.ListMyMessages)
+		authed.POST("/messages", msgSvc.SendMessage)
+		authed.GET("/messages/unread", msgSvc.MyUnreadCount)
+
 		// 金龟子模拟币钱包（与现有游戏币钱包隔离）
 		jz := api.Group("/jinguizi")
 		jz.Use(userSvc.AuthMiddleware())
@@ -330,6 +340,8 @@ func main() {
 			jz.GET("/wallet", jinguiziSvc.GetWallet)
 			jz.GET("/transactions", jinguiziSvc.GetTransactions)
 			jz.GET("/enrollment", jinguiziSvc.GetEnrollment)
+			// 缴费报名：创建报名费支付订单（支付成功后自动报名）
+			jz.POST("/enroll-order", paySvc.CreateEnrollOrder)
 		}
 	}
 
@@ -357,6 +369,11 @@ func main() {
 		admin.POST("/jinguizi/enroll", jinguiziSvc.AdminEnroll)
 		admin.POST("/jinguizi/settle", jinguiziSvc.AdminSettle)
 		admin.POST("/jinguizi/judge", jinguiziSvc.AdminJudge)
+
+		// 应用内留言管理（会话列表 / 查看用户会话 / 以平台身份回复）
+		admin.GET("/messages", msgSvc.ListConversations)
+		admin.GET("/messages/:user_id", msgSvc.ListUserMessages)
+		admin.POST("/messages/:user_id", msgSvc.ReplyAsPlatform)
 	}
 
 	// Serve the built SPA (web/dist) so the whole app is reachable from one URL.

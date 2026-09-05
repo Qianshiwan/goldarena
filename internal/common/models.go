@@ -220,3 +220,17 @@ type JinguiziTransaction struct {
 	Remark        string    `json:"remark,omitempty"`
 	CreatedAt     time.Time `json:"created_at"`
 }
+
+// ========== In-app Message Model ==========
+// Message records a single message in a 1:1 conversation between a user and
+// the platform (admin). Sender is "user" or "platform". Read is from the
+// receiver's perspective: messages sent by the other side are unread until the
+// receiver views the conversation.
+type Message struct {
+	ID        int64     `json:"id"`
+	UserID    int64     `json:"user_id"`
+	Sender    string    `json:"sender"` // "user" | "platform"
+	Content   string    `json:"content"`
+	Read      bool      `json:"read"`
+	CreatedAt time.Time `json:"created_at"`
+}

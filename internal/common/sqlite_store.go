@@ -90,7 +90,8 @@ func migrateSQLite(db *sql.DB) error {
 		`CREATE TABLE IF NOT EXISTS ga_payment_orders (
 			out_trade_no TEXT PRIMARY KEY,
 			id INTEGER, user_id INTEGER, channel TEXT, amount_rmb REAL, game_coins REAL,
-			status TEXT, provider TEXT, qr_content TEXT, pay_url TEXT, created_at TEXT, paid_at TEXT
+			status TEXT, provider TEXT, product TEXT DEFAULT 'gamecoin',
+			qr_content TEXT, pay_url TEXT, created_at TEXT, paid_at TEXT
 		)`,
 		// 金龟子模拟币钱包（与 ga_wallets 完全隔离，独立表）
 		`CREATE TABLE IF NOT EXISTS ga_jinguizi_wallets (
@@ -110,6 +111,15 @@ func migrateSQLite(db *sql.DB) error {
 			contest_id INTEGER, enrolled_at TEXT, settled_at TEXT, remark TEXT,
 			peak_equity REAL, stage_reached INTEGER
 		)`,
+		// 应用内留言（平台与用户双向）
+		`CREATE TABLE IF NOT EXISTS ga_messages (
+			id INTEGER PRIMARY KEY,
+			user_id INTEGER,
+			sender TEXT,
+			content TEXT,
+			read INTEGER,
+			created_at TEXT
+		)`,
 	}
 	for _, s := range stmts {
 		if _, err := db.Exec(s); err != nil {
@@ -121,6 +131,9 @@ func migrateSQLite(db *sql.DB) error {
 	// COLUMN is a no-op if the column already exists.
 	addColumnIfMissing(db, "ga_jinguizi_enrollments", "peak_equity", "REAL")
 	addColumnIfMissing(db, "ga_jinguizi_enrollments", "stage_reached", "INTEGER")
+	// ga_payment_orders.product distinguishes game-coin recharge orders from
+	// 金龟子选拔赛缴费报名 orders ("contest_<tier>").
+	addColumnIfMissing(db, "ga_payment_orders", "product", "TEXT DEFAULT 'gamecoin'")
 	return nil
 }
 
@@ -347,6 +360,40 @@ func (m *MemoryStore) persistJinguiziTxn(t *JinguiziTransaction) {
 	}
 }
 
+func (m *MemoryStore) persistMessage(msg *Message) {
+	if m.db == nil || msg == nil {
+		return
+	}
+	m.dbMu.Lock()
+	defer m.dbMu.Unlock()
+	_, err := m.db.Exec(`INSERT INTO ga_messages
+		(id,user_id,sender,content,read,created_at)
+		VALUES (?,?,?,?,?,?)
+		ON CONFLICT(id) DO UPDATE SET
+		user_id=excluded.user_id,sender=excluded.sender,content=excluded.content,
+		read=excluded.read,created_at=excluded.created_at`,
+		msg.ID, msg.UserID, msg.Sender, msg.Content, boolToInt(msg.Read), fmtTime(msg.CreatedAt))
+	if err != nil {
+		log.Printf("WARN persistMessage(%d): %v", msg.ID, err)
+	}
+}
+
+func (m *MemoryStore) persistMessagesRead(userID int64) {
+	if m.db == nil {
+		return
+	}
+	m.dbMu.Lock()
+	defer m.dbMu.Unlock()
+	_, err := m.db.Exec(`UPDATE ga_messages SET read=1 WHERE user_id=? AND sender=? AND read=0`, userID, "platform")
+	if err != nil {
+		log.Printf("WARN persistMessagesRead(platform,%d): %v", userID, err)
+	}
+	_, err = m.db.Exec(`UPDATE ga_messages SET read=1 WHERE user_id=? AND sender=? AND read=0`, userID, "user")
+	if err != nil {
+		log.Printf("WARN persistMessagesRead(user,%d): %v", userID, err)
+	}
+}
+
 func (m *MemoryStore) persistJinguiziEnrollment(userID int64) {
 	if m.db == nil {
 		return
@@ -449,6 +496,7 @@ func (m *MemoryStore) FlushMeta() {
 		{"order_seq", fmt.Sprint(m.orderSeq.Load())},
 		{"pos_seq", fmt.Sprint(m.posSeq.Load())},
 		{"pay_seq", fmt.Sprint(m.paySeq.Load())},
+		{"msg_seq", fmt.Sprint(m.msgSeq.Load())},
 	} {
 		if _, err := m.db.Exec(`INSERT INTO ga_meta(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`, kv[0], kv[1]); err != nil {
 			log.Printf("WARN FlushMeta(%s): %v", kv[0], err)
@@ -709,14 +757,15 @@ func (m *MemoryStore) LoadFromSQLite() (int, error) {
 	}
 	posRows.Close()
 
-	// Payment orders
-	poRows, err := m.db.Query(`SELECT out_trade_no,id,user_id,channel,amount_rmb,game_coins,status,provider,qr_content,pay_url,created_at,paid_at FROM ga_payment_orders`)
+	// Payment orders (product column may be missing on very old DBs — COALESCE
+	// keeps the scan working while the ADD COLUMN migration above patches it).
+	poRows, err := m.db.Query(`SELECT out_trade_no,id,user_id,channel,amount_rmb,game_coins,status,provider,COALESCE(product,'gamecoin'),qr_content,pay_url,created_at,paid_at FROM ga_payment_orders`)
 	if err == nil {
 		for poRows.Next() {
 			var po PaymentOrder
 			var createdAt string
 			var paidAt sql.NullString
-			if err := poRows.Scan(&po.OutTradeNo, &po.ID, &po.UserID, &po.Channel, &po.AmountRMB, &po.GameCoins, &po.Status, &po.Provider, &po.QRContent, &po.PayURL, &createdAt, &paidAt); err != nil {
+			if err := poRows.Scan(&po.OutTradeNo, &po.ID, &po.UserID, &po.Channel, &po.AmountRMB, &po.GameCoins, &po.Status, &po.Provider, &po.Product, &po.QRContent, &po.PayURL, &createdAt, &paidAt); err != nil {
 				poRows.Close()
 				return 0, err
 			}
@@ -793,6 +842,29 @@ func (m *MemoryStore) LoadFromSQLite() (int, error) {
 			m.jinguiziEnrollments[e.UserID] = &e
 		}
 		enrRows.Close()
+	}
+
+	// 应用内留言
+	msgRows, err := m.db.Query(`SELECT id,user_id,sender,content,read,created_at FROM ga_messages ORDER BY created_at`)
+	if err == nil {
+		var maxMsg int64
+		for msgRows.Next() {
+			var msg Message
+			var read int
+			var createdAt string
+			if err := msgRows.Scan(&msg.ID, &msg.UserID, &msg.Sender, &msg.Content, &read, &createdAt); err != nil {
+				msgRows.Close()
+				return 0, err
+			}
+			msg.Read = read != 0
+			msg.CreatedAt = parseTime(createdAt)
+			m.messages[msg.UserID] = append(m.messages[msg.UserID], msg)
+			if msg.ID > maxMsg {
+				maxMsg = msg.ID
+			}
+		}
+		msgRows.Close()
+		m.msgSeq.Store(maxMsg)
 	}
 
 	// Meta sequences

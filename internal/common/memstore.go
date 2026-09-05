@@ -32,11 +32,15 @@ type MemoryStore struct {
 	// 金龟子选拔赛报名记录（与钱包平行，独立子系统）
 	jinguiziEnrollments map[int64]*JinguiziEnrollment
 
+	// 应用内留言（平台与用户双向）
+	messages map[int64][]Message
+
 	userSeq   atomic.Int64
 	orderSeq  atomic.Int64
 	posSeq    atomic.Int64
 	paySeq    atomic.Int64
 	jinguiziSeq atomic.Int64
+	msgSeq    atomic.Int64
 
 	db   *sql.DB // optional SQLite durable backend (nil = memory-only)
 	dbMu sync.Mutex
@@ -53,6 +57,7 @@ func NewMemoryStore(sqlitePath string) *MemoryStore {
 		jinguiziWallets: make(map[int64]*JinguiziWallet),
 		jinguiziTxns:    make(map[int64][]JinguiziTransaction),
 		jinguiziEnrollments: make(map[int64]*JinguiziEnrollment),
+		messages:        make(map[int64][]Message),
 	}
 	if sqlitePath != "" {
 		db, err := openSQLite(sqlitePath)
@@ -389,6 +394,96 @@ func (m *MemoryStore) GetAllActiveEnrollments() []*JinguiziEnrollment {
 	return res
 }
 
+// ========== In-app Message helpers ==========
+
+func (m *MemoryStore) NextMessageID() int64 {
+	return m.msgSeq.Add(1)
+}
+
+// SaveMessage appends a message to the user's thread and persists it.
+func (m *MemoryStore) SaveMessage(msg *Message) {
+	if msg.ID == 0 {
+		msg.ID = m.NextMessageID()
+	}
+	if msg.CreatedAt.IsZero() {
+		msg.CreatedAt = time.Now()
+	}
+	m.mu.Lock()
+	m.messages[msg.UserID] = append(m.messages[msg.UserID], *msg)
+	m.mu.Unlock()
+	m.persistMessage(msg)
+}
+
+// GetMessages returns the full conversation for a user, oldest first.
+func (m *MemoryStore) GetMessages(userID int64) []Message {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if msgs, ok := m.messages[userID]; ok {
+		res := make([]Message, len(msgs))
+		copy(res, msgs)
+		return res
+	}
+	return nil
+}
+
+// MarkMessagesRead marks unread messages from the opposite side as read.
+// When a user opens the chat, mark all "platform" messages as read.
+// When the admin opens the chat, mark all "user" messages as read.
+func (m *MemoryStore) MarkMessagesRead(userID int64, reader string) {
+	m.mu.Lock()
+	if msgs, ok := m.messages[userID]; ok {
+		for i := range msgs {
+			if !msgs[i].Read && msgs[i].Sender != reader {
+				msgs[i].Read = true
+			}
+		}
+		m.messages[userID] = msgs
+	}
+	m.mu.Unlock()
+	m.persistMessagesRead(userID)
+}
+
+// GetUnreadMessageCounts returns a map[userID]count of unread user messages
+// (from the platform's perspective, i.e. sender == "user" and read == false).
+func (m *MemoryStore) GetUnreadMessageCounts() map[int64]int {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	counts := make(map[int64]int)
+	for uid, msgs := range m.messages {
+		for _, msg := range msgs {
+			if msg.Sender == "user" && !msg.Read {
+				counts[uid]++
+			}
+		}
+	}
+	return counts
+}
+
+// GetMessageConversationUserIDs returns all user IDs that have at least one
+// message in the platform, sorted by their latest message time descending.
+func (m *MemoryStore) GetMessageConversationUserIDs() []int64 {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	type pair struct {
+		uid int64
+		at  time.Time
+	}
+	pairs := make([]pair, 0, len(m.messages))
+	for uid, msgs := range m.messages {
+		if len(msgs) == 0 {
+			continue
+		}
+		last := msgs[len(msgs)-1]
+		pairs = append(pairs, pair{uid: uid, at: last.CreatedAt})
+	}
+	sort.Slice(pairs, func(i, j int) bool { return pairs[i].at.After(pairs[j].at) })
+	res := make([]int64, len(pairs))
+	for i, p := range pairs {
+		res[i] = p.uid
+	}
+	return res
+}
+
 
 func (m *MemoryStore) SaveOrder(o *Order) {
 	m.mu.Lock()
@@ -485,11 +580,17 @@ type memSnapshot struct {
 	JinguiziWallets []JinguiziWallet       `json:"jinguizi_wallets"`
 	JinguiziTxns    []jinguiziTxnGroup     `json:"jinguizi_txns"`
 	JinguiziEnrollments []JinguiziEnrollment `json:"jinguizi_enrollments"`
+	Messages   []messageGroup     `json:"messages"`
 }
 
 type jinguiziTxnGroup struct {
 	UserID int64                `json:"user_id"`
 	Txns   []JinguiziTransaction `json:"txns"`
+}
+
+type messageGroup struct {
+	UserID int64     `json:"user_id"`
+	Msgs   []Message `json:"msgs"`
 }
 
 // SaveSnapshot writes the whole in-memory store to disk as JSON (atomic via temp+rename).
@@ -521,6 +622,9 @@ func (m *MemoryStore) SaveSnapshot(path string) error {
 	}
 	for _, e := range m.jinguiziEnrollments {
 		snap.JinguiziEnrollments = append(snap.JinguiziEnrollments, *e)
+	}
+	for uid, msgs := range m.messages {
+		snap.Messages = append(snap.Messages, messageGroup{UserID: uid, Msgs: msgs})
 	}
 	m.mu.RUnlock()
 
@@ -604,6 +708,15 @@ func (m *MemoryStore) LoadSnapshot(path string) error {
 			}
 		}
 	}
+	var maxMsg int64
+	for _, g := range snap.Messages {
+		m.messages[g.UserID] = g.Msgs
+		for _, msg := range g.Msgs {
+			if msg.ID > maxMsg {
+				maxMsg = msg.ID
+			}
+		}
+	}
 	// Restore sequence counters so new IDs don't collide with restored ones.
 	// NextUserID/NextOrderID/NextPositionID themselves do +1, so store the max.
 	m.userSeq.Store(maxUser)
@@ -611,6 +724,7 @@ func (m *MemoryStore) LoadSnapshot(path string) error {
 	m.posSeq.Store(maxPos)
 	m.paySeq.Store(maxPay)
 	m.jinguiziSeq.Store(maxJi)
+	m.msgSeq.Store(maxMsg)
 	return nil
 }
 

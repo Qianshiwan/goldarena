@@ -7,6 +7,7 @@ const items = [
   { to: '/admin/trades', label: '交易监控' },
   { to: '/admin/payments', label: '支付管理' },
   { to: '/admin/jinguizi', label: '金龟子钱包' },
+  { to: '/admin/messages', label: '留言管理' },
 ]
 
 export default function AdminLayout() {

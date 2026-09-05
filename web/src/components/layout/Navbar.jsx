@@ -37,6 +37,9 @@ export default function Navbar() {
               <Link to="/pnl" className="text-gray-300 hover:text-gold transition-colors text-sm">
                 盈亏统计
               </Link>
+              <Link to="/messages" className="text-gray-300 hover:text-gold transition-colors text-sm">
+                留言
+              </Link>
               {user?.role === 'admin' && (
                 <Link to="/admin" className="text-gold hover:text-yellow-300 transition-colors text-sm font-semibold">
                   管理后台

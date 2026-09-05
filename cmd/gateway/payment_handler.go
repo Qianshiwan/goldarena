@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -25,6 +26,7 @@ type PaymentService struct {
 	gateway string
 	pid     string
 	key     string
+	jzSvc   *JinguiziService // 金龟子选拔赛缴费报名（order.Product == "contest_<tier>"）
 }
 
 func NewPaymentService(mem *common.MemoryStore, provider payment.Provider, sandbox bool, rate float64, baseURL, gateway, pid, key string) *PaymentService {
@@ -63,6 +65,7 @@ func (s *PaymentService) CreateOrder(c *gin.Context) {
 		GameCoins:  gameCoins,
 		Status:     common.PaymentPending,
 		Provider:   "aggregator",
+		Product:    "gamecoin",
 		CreatedAt:  time.Now(),
 	}
 
@@ -203,11 +206,131 @@ func (s *PaymentService) QRCode(c *gin.Context) {
 	c.Data(200, "image/png", png)
 }
 
+// ========== 金龟子选拔赛缴费报名（真实付费报名通道） ==========
+
+type enrollOrderReq struct {
+	Tier    string `json:"tier" binding:"required"` // small / medium / large
+	Channel string `json:"channel"`                 // wxpay | alipay
+}
+
+// CreateEnrollOrder opens a real-money 选拔赛报名费 order. On successful payment
+// (async notify / sandbox simulate) the payer is auto-enrolled at the chosen
+// tier with the tier's contest capital granted into their 金龟子 wallet.
+func (s *PaymentService) CreateEnrollOrder(c *gin.Context) {
+	userID := c.GetInt64("user_id")
+	var req enrollOrderReq
+	if err := common.BindJSON(c, &req); err != nil {
+		return
+	}
+	fee, ok := jinguiziTierFee[req.Tier]
+	if !ok {
+		common.Error(c, errs.InvalidParam, "tier 必须是 small / medium / large 之一")
+		return
+	}
+	channel := req.Channel
+	if channel == "" {
+		channel = "wxpay"
+	}
+	if channel != "wxpay" && channel != "alipay" {
+		common.Error(c, errs.InvalidParam, "channel must be wxpay or alipay")
+		return
+	}
+	if s.jzSvc == nil {
+		common.Error(c, errs.Internal, "选拔赛服务不可用")
+		return
+	}
+	// Reject duplicate active enrollment up front (also re-checked at pay time).
+	if err := s.jzSvc.CheckCanEnroll(userID); err != nil {
+		common.Error(c, errs.InvalidParam, err.Error())
+		return
+	}
+
+	label := jinguiziTierLabel[req.Tier]
+	outTradeNo := fmt.Sprintf("JZ%d%06d%d", time.Now().UnixNano()/1e6, userID, time.Now().Nanosecond()%100000)
+	order := &common.PaymentOrder{
+		UserID:     userID,
+		OutTradeNo: outTradeNo,
+		Channel:    channel,
+		AmountRMB:  fee,
+		GameCoins:  0,
+		Status:     common.PaymentPending,
+		Provider:   "aggregator",
+		Product:    "contest_" + req.Tier,
+		CreatedAt:  time.Now(),
+	}
+
+	if s.sandbox {
+		order.Provider = "sandbox"
+		order.QRContent = outTradeNo
+		order.PayURL = fmt.Sprintf("%s/api/v1/payment/simulate?out_trade_no=%s", s.baseURL, outTradeNo)
+		s.mem.SavePaymentOrder(order)
+		common.Success(c, gin.H{
+			"sandbox":    true,
+			"order":      order,
+			"tier":       req.Tier,
+			"tier_label": label,
+			"fee":        fee,
+			"qr_content": order.QRContent,
+			"pay_url":    order.PayURL,
+		})
+		return
+	}
+
+	if s.provider == nil {
+		common.Error(c, errs.Internal, "payment provider not configured")
+		return
+	}
+	in := payment.CreateOrderInput{
+		Gateway:    s.gateway,
+		PID:        s.pid,
+		Key:        s.key,
+		NotifyURL:  s.baseURL + "/api/v1/payment/notify",
+		ReturnURL:  s.baseURL + "/api/v1/payment/simulate?out_trade_no=" + outTradeNo,
+		OutTradeNo: outTradeNo,
+		Channel:    channel,
+		Amount:     fee,
+		Name:       "金龟子选拔赛报名费·" + label,
+	}
+	res, err := s.provider.CreateOrder(context.Background(), in)
+	if err != nil {
+		common.Error(c, errs.Internal, "create payment failed: "+err.Error())
+		return
+	}
+	order.QRContent = res.QRContent
+	order.PayURL = res.PayURL
+	s.mem.SavePaymentOrder(order)
+	common.Success(c, gin.H{
+		"sandbox":    false,
+		"order":      order,
+		"tier":       req.Tier,
+		"tier_label": label,
+		"fee":        fee,
+		"qr_content": res.QRContent,
+		"pay_url":    res.PayURL,
+	})
+}
+
 // creditIfPending credits the wallet exactly once for a pending order.
+//   - product == "gamecoin" (default): credit game coins into the wallet.
+//   - product == "contest_<tier>":      金龟子选拔赛缴费报名 — auto-enroll the
+//     payer at the paid tier instead of crediting game coins.
 func (s *PaymentService) creditIfPending(outTradeNo string) {
 	order := s.mem.GetPaymentOrderByOutTradeNo(outTradeNo)
 	if order == nil || order.Status != common.PaymentPending {
 		return // already paid / missing — idempotent
+	}
+	if strings.HasPrefix(order.Product, "contest_") {
+		tier := strings.TrimPrefix(order.Product, "contest_")
+		now := time.Now()
+		if s.jzSvc != nil {
+			if err := s.jzSvc.EnrollAfterPayment(order.UserID, tier, order.OutTradeNo, order.AmountRMB); err != nil {
+				fmt.Printf("[PAYMENT] enroll-after-payment failed (order=%s user=%d tier=%s): %v\n",
+					order.OutTradeNo, order.UserID, tier, err)
+				return // leave pending; admin can retry via /admin/payments/:no/credit
+			}
+		}
+		s.mem.UpdatePaymentOrderStatus(outTradeNo, common.PaymentPaid, &now)
+		return
 	}
 	wallet := s.mem.GetWallet(order.UserID)
 	if wallet == nil {

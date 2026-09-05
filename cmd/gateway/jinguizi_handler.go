@@ -25,6 +25,13 @@ var jinguiziTierCapital = map[string]float64{
 	JinguiziTierLarge:  10000000,
 }
 
+// jinguiziTierFee is the real-money 管理费 charged for 缴费报名 (per tier).
+var jinguiziTierFee = map[string]float64{
+	JinguiziTierSmall:  200,
+	JinguiziTierMedium: 1000,
+	JinguiziTierLarge:  2000,
+}
+
 var jinguiziTierLabel = map[string]string{
 	JinguiziTierSmall:  "小账户(100万)",
 	JinguiziTierMedium: "中账户(500万)",
@@ -297,30 +304,12 @@ func (s *JinguiziService) AdminEnroll(c *gin.Context) {
 		return
 	}
 
-	w := s.mem.EnsureJinguiziWallet(uid)
-	balanceBefore := w.Balance
-	newBalance := balanceBefore + capital
-	s.mem.UpdateJinguiziBalance(uid, newBalance, w.Frozen)
-	s.mem.AddJinguiziRecharged(uid, capital)
-
 	label := jinguiziTierLabel[req.Tier]
-	now := time.Now()
-	s.mem.SaveJinguiziTransaction(uid, &common.JinguiziTransaction{
-		UserID: uid, OperatorID: operatorID, Type: "contest_entry", Amount: capital,
-		BalanceBefore: balanceBefore, BalanceAfter: newBalance,
-		Remark: "选拔赛报名·" + label, CreatedAt: now,
-	})
-
-	enr := &common.JinguiziEnrollment{
-		UserID:         uid,
-		Tier:           req.Tier,
-		InitialCapital: capital,
-		Status:         "active",
-		ContestID:      req.ContestID,
-		EnrolledAt:     now,
-		Remark:         label,
+	capital, balanceBefore, newBalance, err := s.enrollCore(operatorID, uid, req.Tier, req.ContestID, "选拔赛报名·"+label)
+	if err != nil {
+		common.Error(c, errs.Internal, err.Error())
+		return
 	}
-	s.mem.SaveJinguiziEnrollment(enr)
 
 	common.Success(c, gin.H{
 		"user_id":          uid,
@@ -331,6 +320,75 @@ func (s *JinguiziService) AdminEnroll(c *gin.Context) {
 		"balance_after":    newBalance,
 		"enrollment_status": "active",
 	})
+}
+
+// enrollCore grants the tier's contest capital into the isolated 金龟子 wallet,
+// records the contest_entry transaction and the active enrollment. Shared by
+// admin manual enrollment and paid (缴费) enrollment.
+func (s *JinguiziService) enrollCore(operatorID int64, uid int64, tier string, contestID int64, remark string) (capital, balanceBefore, balanceAfter float64, err error) {
+	capital, ok := jinguiziTierCapital[tier]
+	if !ok {
+		return 0, 0, 0, fmt.Errorf("tier 必须是 small / medium / large 之一")
+	}
+	w := s.mem.EnsureJinguiziWallet(uid)
+	balanceBefore = w.Balance
+	balanceAfter = balanceBefore + capital
+	s.mem.UpdateJinguiziBalance(uid, balanceAfter, w.Frozen)
+	s.mem.AddJinguiziRecharged(uid, capital)
+
+	now := time.Now()
+	s.mem.SaveJinguiziTransaction(uid, &common.JinguiziTransaction{
+		UserID: uid, OperatorID: operatorID, Type: "contest_entry", Amount: capital,
+		BalanceBefore: balanceBefore, BalanceAfter: balanceAfter,
+		Remark: remark, CreatedAt: now,
+	})
+
+	enr := &common.JinguiziEnrollment{
+		UserID:         uid,
+		Tier:           tier,
+		InitialCapital: capital,
+		Status:         "active",
+		ContestID:      contestID,
+		EnrolledAt:     now,
+		Remark:         jinguiziTierLabel[tier],
+	}
+	s.mem.SaveJinguiziEnrollment(enr)
+	return capital, balanceBefore, balanceAfter, nil
+}
+
+// CheckCanEnroll verifies the user exists and has no active enrollment. Used by
+// the 缴费报名 flow before opening a payment order.
+func (s *JinguiziService) CheckCanEnroll(userID int64) error {
+	if s.mem.GetUserByID(userID) == nil {
+		return fmt.Errorf("用户不存在")
+	}
+	if ex := s.mem.GetJinguiziEnrollment(userID); ex != nil && ex.Status == "active" {
+		return fmt.Errorf("该用户已报名且参赛中，不能重复报名")
+	}
+	return nil
+}
+
+// EnrollAfterPayment auto-enrolls a user whose 报名费 payment just succeeded.
+// Called from PaymentService.creditIfPending for contest_<tier> orders. If the
+// user became active meanwhile (e.g. admin enrolled manually), it succeeds as a
+// no-op so the order can still be closed as paid.
+func (s *JinguiziService) EnrollAfterPayment(userID int64, tier, outTradeNo string, fee float64) error {
+	if _, ok := jinguiziTierCapital[tier]; !ok {
+		return fmt.Errorf("无效档位: %s", tier)
+	}
+	if ex := s.mem.GetJinguiziEnrollment(userID); ex != nil && ex.Status == "active" {
+		log.Printf("[JINGUIZI] enroll-after-payment: user=%d already active, skip (order=%s)", userID, outTradeNo)
+		return nil
+	}
+	label := jinguiziTierLabel[tier]
+	capital, before, after, err := s.enrollCore(0, userID, tier, 0,
+		fmt.Sprintf("缴费报名·%s(报名费¥%.0f,订单%s)", label, fee, outTradeNo))
+	if err != nil {
+		return err
+	}
+	log.Printf("[JINGUIZI] user=%d paid-enrolled tier=%s fee=%.0f capital=%.0f (order=%s, balance %.0f -> %.0f)",
+		userID, tier, fee, capital, outTradeNo, before, after)
+	return nil
 }
 
 type AdminSettleJinguiziReq struct {
