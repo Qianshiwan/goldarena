@@ -13,7 +13,7 @@ function calcPnl(position, currentPrice) {
   return diff * CONTRACT_SIZE * position.volume
 }
 
-export default function PositionList() {
+export default function PositionList({ contestId = null }) {
   const [positions, setPositions] = useState([])
   const [loading, setLoading] = useState(true)
   const [livePrice, setLivePrice] = useState(null)
@@ -41,11 +41,11 @@ export default function PositionList() {
       unsub()
       if (unsubTrade) unsubTrade()
     }
-  }, [])
+  }, [contestId])
 
   const fetchPositions = async () => {
     try {
-      const { data } = await tradeAPI.getPositions()
+      const { data } = await tradeAPI.getPositions(contestId)
       if (data.data) setPositions(data.data)
     } catch {}
     setLoading(false)

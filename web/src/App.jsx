@@ -3,6 +3,7 @@ import useAuthStore from './stores/authStore'
 import Navbar from './components/layout/Navbar'
 import DashboardPage from './pages/DashboardPage'
 import TradePage from './pages/TradePage'
+import ContestTradePage from './pages/ContestTradePage'
 import LoginPage from './pages/LoginPage'
 import RegisterPage from './pages/RegisterPage'
 import WalletPage from './pages/WalletPage'
@@ -42,6 +43,7 @@ export default function App() {
           <Route path="/register" element={<RegisterPage />} />
           <Route path="/" element={<PrivateRoute><DashboardPage /></PrivateRoute>} />
           <Route path="/trade" element={<PrivateRoute><TradePage /></PrivateRoute>} />
+          <Route path="/contest-trade" element={<PrivateRoute><ContestTradePage /></PrivateRoute>} />
           <Route path="/wallet" element={<PrivateRoute><WalletPage /></PrivateRoute>} />
           <Route path="/jinguizi" element={<PrivateRoute><JinguiziWalletPage /></PrivateRoute>} />
           <Route path="/cultivation" element={<PrivateRoute><CultivationPage /></PrivateRoute>} />

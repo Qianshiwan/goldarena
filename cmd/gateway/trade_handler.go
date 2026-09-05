@@ -7,6 +7,7 @@ import (
 	"log"
 	"math"
 	"sort"
+	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -353,9 +354,16 @@ func (s *TradeService) GetPositions(c *gin.Context) {
 		status, created_at
 		FROM positions WHERE user_id=$1 AND status=1`
 	args := []interface{}{userID}
-	if contestID != "" {
-		query += " AND contest_id=$2"
-		args = append(args, contestID)
+	switch {
+	case contestID == "" || contestID == "null":
+		query += " AND contest_id IS NULL"
+	case contestID == "all":
+		// no filter
+	default:
+		if cid, err := strconv.ParseInt(contestID, 10, 64); err == nil {
+			query += " AND contest_id=$2"
+			args = append(args, cid)
+		}
 	}
 	query += " ORDER BY created_at DESC"
 
@@ -497,6 +505,9 @@ type TradePnLReq struct {
 
 func (s *TradeService) GetTradePnL(c *gin.Context) {
 	userID := c.GetInt64("user_id")
+	// contest_id 过滤：null/空=游戏币, "all"=全部, "<id>"=指定 contest
+	contestParam := c.Query("contest_id")
+	contestOnly := contestParam != "" && contestParam != "all"
 
 	// Memory mode fallback
 	if s.isMemoryMode() {
@@ -510,6 +521,19 @@ func (s *TradeService) GetTradePnL(c *gin.Context) {
 		totalPnL := 0.0
 		trades := []gin.H{}
 		for _, p := range closed {
+			// 过滤 contest
+			if contestOnly {
+				if cid, err := strconv.ParseInt(contestParam, 10, 64); err == nil {
+					if p.ContestID == nil || *p.ContestID != cid {
+						continue
+					}
+				}
+			} else if contestParam == "" {
+				// 显式 null 表示游戏币
+				if p.ContestID != nil {
+					continue
+				}
+			}
 			totalPnL += p.FloatingPnL
 			var closedAt *time.Time
 			if p.ClosedAt != nil && !p.ClosedAt.IsZero() {
@@ -526,6 +550,7 @@ func (s *TradeService) GetTradePnL(c *gin.Context) {
 				"pnl":          p.FloatingPnL,
 				"spread_cost":  p.SpreadCost,
 				"margin":       p.Margin,
+				"contest_id":   p.ContestID,
 				"created_at":   p.CreatedAt,
 				"closed_at":    closedAt,
 			})
@@ -537,12 +562,21 @@ func (s *TradeService) GetTradePnL(c *gin.Context) {
 		return
 	}
 
-	rows, err := s.pg.Pool.Query(context.Background(),
-			`SELECT p.id, p.symbol, p.direction, p.volume, p.leverage,
-			        p.open_price, p.current_price, p.floating_pnl, p.spread_cost,
-			        p.margin, p.created_at, p.closed_at
-			 FROM positions p WHERE p.user_id=$1 AND p.status=2
-			 ORDER BY p.closed_at DESC LIMIT 100`, userID)
+	query := `SELECT p.id, p.symbol, p.direction, p.volume, p.leverage,
+		        p.open_price, p.current_price, p.floating_pnl, p.spread_cost,
+		        p.margin, p.contest_id, p.created_at, p.closed_at
+		 FROM positions p WHERE p.user_id=$1 AND p.status=2`
+	args := []any{userID}
+	if contestOnly {
+		if cid, err := strconv.ParseInt(contestParam, 10, 64); err == nil {
+			query += " AND p.contest_id=$2"
+			args = append(args, cid)
+		}
+	} else if contestParam == "" {
+		query += " AND p.contest_id IS NULL"
+	}
+	query += " ORDER BY p.closed_at DESC LIMIT 100"
+	rows, err := s.pg.Pool.Query(context.Background(), query, args...)
 	if err != nil {
 		common.Error(c, errs.Internal, "query failed")
 		return
@@ -556,11 +590,12 @@ func (s *TradeService) GetTradePnL(c *gin.Context) {
 		var symbol string
 		var direction int
 		var volume, leverage, openPrice, closePrice, pnl, spreadCost, margin float64
+		var contestID *int64
 		var createdAt time.Time
 		var closedAt *time.Time
 		if err := rows.Scan(&id, &symbol, &direction, &volume, &leverage,
 			&openPrice, &closePrice, &pnl, &spreadCost, &margin,
-			&createdAt, &closedAt); err != nil {
+			&contestID, &createdAt, &closedAt); err != nil {
 			continue
 		}
 		totalPnL += pnl
@@ -575,6 +610,7 @@ func (s *TradeService) GetTradePnL(c *gin.Context) {
 			"pnl":         pnl,
 			"spread_cost": spreadCost,
 			"margin":      margin,
+			"contest_id":  contestID,
 			"created_at":  createdAt,
 			"closed_at":   closedAt,
 		})
@@ -676,11 +712,12 @@ func (s *TradeService) GetClosedPositionsPage(c *gin.Context) {
 		var symbol string
 		var direction int
 		var volume, leverage, openPrice, closePrice, pnl, spreadCost, margin float64
+		var contestID *int64
 		var createdAt time.Time
 		var closedAt *time.Time
 		if err := rows.Scan(&id, &symbol, &direction, &volume, &leverage,
 			&openPrice, &closePrice, &pnl, &spreadCost, &margin,
-			&createdAt, &closedAt); err != nil {
+			&contestID, &createdAt, &closedAt); err != nil {
 			continue
 		}
 		totalPnL += pnl
@@ -695,6 +732,7 @@ func (s *TradeService) GetClosedPositionsPage(c *gin.Context) {
 			"pnl":         pnl,
 			"spread_cost": spreadCost,
 			"margin":      margin,
+			"contest_id":  contestID,
 			"created_at":  createdAt,
 			"closed_at":   closedAt,
 		})
@@ -885,24 +923,37 @@ func (s *TradeService) getPositionsMem(c *gin.Context, userID int64, contestID s
 	positions := s.mem.GetPositions(userID, nil)
 
 	// Update floating PnL with current quote
-	for _, p := range positions {
+	for i := range positions {
+		p := &positions[i]
 		quote, err := s.getQuote(p.Symbol, p.ContractMonth)
 		if err == nil {
-			pnl := s.calculatePnL(&p, quote.Price)
+			pnl := s.calculatePnL(p, quote.Price)
 			p.CurrentPrice = quote.Price
 			p.FloatingPnL = pnl
-			// Update in store
-			cp := p
-			cp.FloatingPnL = pnl
-			cp.CurrentPrice = quote.Price
+			cp := *p
 			s.mem.UpdatePosition(&cp)
 		}
 	}
 
-	if positions == nil {
-		positions = []common.Position{}
+	// Filter by contest_id: "" or "null" → gamecoin (contest_id IS NULL),
+	// "<id>" → matching contest, "all" → all
+	filtered := make([]common.Position, 0, len(positions))
+	for _, p := range positions {
+		if contestID == "" || contestID == "null" {
+			if p.ContestID != nil {
+				continue
+			}
+		} else if contestID != "all" {
+			if cid, err := strconv.ParseInt(contestID, 10, 64); err == nil {
+				if p.ContestID == nil || *p.ContestID != cid {
+					continue
+				}
+			}
+		}
+		filtered = append(filtered, p)
 	}
-	common.Success(c, positions)
+
+	common.Success(c, filtered)
 }
 
 func (s *TradeService) closePositionMem(c *gin.Context, userID int64, positionID int64) {
@@ -1211,16 +1262,34 @@ func (s *TradeService) cancelOrderMem(c *gin.Context, userID int64, orderID int6
 }
 
 // GetPendingOrders returns the current user's pending (unfilled) orders.
+// When contest_id is provided, only that contest's orders are returned (used by
+// the 选拔赛 trading page). Otherwise we still skip contest orders when the user
+// has any gamecoin pending orders so the 交易大厅 view stays clean.
 func (s *TradeService) GetPendingOrders(c *gin.Context) {
 	userID := c.GetInt64("user_id")
+	contestIDStr := c.Query("contest_id")
 
 	if s.isMemoryMode() {
 		orders := s.mem.GetAllOrders()
 		var pending []common.Order
 		for _, o := range orders {
-			if o.UserID == userID && o.Status == 1 {
-				pending = append(pending, o)
+			if o.UserID != userID || o.Status != 1 {
+				continue
 			}
+			if contestIDStr != "" {
+				// contest mode: only return orders belonging to that contest
+				if cid, err := strconv.ParseInt(contestIDStr, 10, 64); err == nil {
+					if o.ContestID == nil || *o.ContestID != cid {
+						continue
+					}
+				}
+			} else {
+				// gamecoin mode: only return non-contest orders
+				if o.ContestID != nil {
+					continue
+				}
+			}
+			pending = append(pending, o)
 		}
 		if pending == nil {
 			pending = []common.Order{}
@@ -1229,10 +1298,20 @@ func (s *TradeService) GetPendingOrders(c *gin.Context) {
 		return
 	}
 
-	rows, err := s.pg.Pool.Query(context.Background(),
-		`SELECT id, order_no, symbol, contract_month, direction, order_type, volume, leverage,
-		        price, stop_loss, take_profit, margin, status, created_at
-		 FROM orders WHERE user_id=$1 AND status=1 ORDER BY created_at ASC`, userID)
+	query := `SELECT id, order_no, symbol, contract_month, direction, order_type, volume, leverage,
+		        price, stop_loss, take_profit, margin, status, contest_id, created_at
+		 FROM orders WHERE user_id=$1 AND status=1`
+	args := []any{userID}
+	if contestIDStr != "" {
+		if cid, err := strconv.ParseInt(contestIDStr, 10, 64); err == nil {
+			query += " AND contest_id=$2"
+			args = append(args, cid)
+		}
+	} else {
+		query += " AND contest_id IS NULL"
+	}
+	query += " ORDER BY created_at ASC"
+	rows, err := s.pg.Pool.Query(context.Background(), query, args...)
 	if err != nil {
 		common.Error(c, errs.Internal, "query failed")
 		return
@@ -1244,7 +1323,8 @@ func (s *TradeService) GetPendingOrders(c *gin.Context) {
 		var o common.Order
 		if err := rows.Scan(&o.ID, &o.OrderNo, &o.Symbol, &o.ContractMonth,
 			&o.Direction, &o.OrderType, &o.Volume, &o.Leverage,
-			&o.Price, &o.StopLoss, &o.TakeProfit, &o.Margin, &o.Status, &o.CreatedAt); err != nil {
+			&o.Price, &o.StopLoss, &o.TakeProfit, &o.Margin, &o.Status,
+			&o.ContestID, &o.CreatedAt); err != nil {
 			continue
 		}
 		orders = append(orders, o)

@@ -8,7 +8,9 @@ const ORDER_TYPES = [
   { value: 3, label: '止损单', desc: '突破指定价格时追涨/杀跌' },
 ]
 
-export default function OrderPanel() {
+// contestId=null 表示游戏币钱包（普通交易大厅）
+// contestId=<user_id> 表示金龟子币钱包（选拔赛交易）
+export default function OrderPanel({ contestId = null, disabled = false }) {
   const [volume, setVolume] = useState(0.05)
   const [leverage, setLeverage] = useState(10)
   const [livePrice, setLivePrice] = useState(null)
@@ -23,15 +25,15 @@ export default function OrderPanel() {
   const [stopLoss, setStopLoss] = useState('')
   const [takeProfit, setTakeProfit] = useState('')
 
-  // 拉取当前 XAU 持仓
+  // 拉取当前 XAU 持仓（按 contestId 过滤）
   const refreshPositions = useCallback(() => {
-    tradeAPI.getPositions().then(({ data }) => {
+    tradeAPI.getPositions(contestId).then(({ data }) => {
       const list = (data.data || []).filter(
         (p) => p.symbol === 'XAU' && p.contract_month === 'SPOT' && p.status === 1
       )
       setPositions(list)
     }).catch(() => {})
-  }, [])
+  }, [contestId])
 
   // 实时金价
   useEffect(() => {
@@ -52,17 +54,20 @@ export default function OrderPanel() {
 
   // 市价单：一键做多/做空（保持原有逻辑）
   const oneClickOrder = async (direction) => {
+    if (disabled) return
     setLoading(true)
     setResult(null)
     try {
-      const { data } = await tradeAPI.placeOrder({
+      const payload = {
         symbol: 'XAU',
         contract_month: 'SPOT',
         direction,
         order_type: 1,
         volume,
         leverage,
-      })
+      }
+      if (contestId !== null && contestId !== undefined) payload.contest_id = contestId
+      const { data } = await tradeAPI.placeOrder(payload)
       setResult({ success: true, ...data.data })
       refreshPositions()
     } catch (err) {
@@ -74,6 +79,7 @@ export default function OrderPanel() {
 
   // 挂单交易（限价/止损）
   const placePendingOrder = async (direction) => {
+    if (disabled) return
     const price = parseFloat(triggerPrice)
     if (!price || price <= 0) {
       setResult({ success: false, message: '请输入有效的触发价格' })
@@ -100,6 +106,7 @@ export default function OrderPanel() {
       }
       if (sl) payload.stop_loss = sl
       if (tp) payload.take_profit = tp
+      if (contestId !== null && contestId !== undefined) payload.contest_id = contestId
 
       const { data } = await tradeAPI.placeOrder(payload)
       setResult({ success: true, ...data.data, message: '挂单成功，等待成交...' })
@@ -153,6 +160,12 @@ export default function OrderPanel() {
           市价 <span className="font-mono text-gold">${livePrice ? livePrice.toFixed(2) : '—'}</span>
         </span>
       </div>
+
+      {disabled && (
+        <div className="mb-3 p-2 rounded bg-red-900/30 border border-red-700/50 text-xs text-red-300">
+          ⚠️ 当前模式暂不可交易。请先报名金龟子选拔赛。
+        </div>
+      )}
 
       {/* 订单类型切换 */}
       <div className="mb-3">
@@ -248,14 +261,14 @@ export default function OrderPanel() {
         <div className="grid grid-cols-2 gap-2 mb-3">
           <button
             onClick={() => placePendingOrder(1)}
-            disabled={loading || !triggerPrice}
+            disabled={loading || !triggerPrice || disabled}
             className="btn-trade-long py-3 rounded font-bold text-sm transition-all disabled:opacity-60"
           >
             {loading ? '提交中...' : `挂单做多${triggerPrice ? ` @${parseFloat(triggerPrice).toFixed(2)}` : ''}`}
           </button>
           <button
             onClick={() => placePendingOrder(2)}
-            disabled={loading || !triggerPrice}
+            disabled={loading || !triggerPrice || disabled}
             className="btn-trade-short py-3 rounded font-bold text-sm transition-all disabled:opacity-60"
           >
             {loading ? '提交中...' : `挂单做空${triggerPrice ? ` @${parseFloat(triggerPrice).toFixed(2)}` : ''}`}
@@ -266,14 +279,14 @@ export default function OrderPanel() {
         <div className="grid grid-cols-2 gap-2 mb-3">
           <button
             onClick={() => oneClickOrder(1)}
-            disabled={loading}
+            disabled={loading || disabled}
             className="btn-trade-long py-3 rounded font-bold text-sm transition-all disabled:opacity-60"
           >
             一键做多
           </button>
           <button
             onClick={() => oneClickOrder(2)}
-            disabled={loading}
+            disabled={loading || disabled}
             className="btn-trade-short py-3 rounded font-bold text-sm transition-all disabled:opacity-60"
           >
             一键做空

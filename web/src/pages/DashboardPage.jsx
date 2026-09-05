@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import api, { cultivationAPI } from '../services/api';
+import api, { cultivationAPI, jinguiziAPI } from '../services/api';
 import useAuthStore from '../stores/authStore';
 
 export default function DashboardPage() {
@@ -10,18 +10,22 @@ export default function DashboardPage() {
   const [wallet, setWallet] = useState(null);
   const [cultivation, setCultivation] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [hasActiveEnrollment, setHasActiveEnrollment] = useState(false);
 
   useEffect(() => {
     const fetchData = async () => {
       try {
-        const [quoteRes, walletRes, cultRes] = await Promise.all([
+        const [quoteRes, walletRes, cultRes, enrollRes] = await Promise.all([
           api.get('/market/quote?symbol=XAU'),
           api.get('/user/wallet'),
           cultivationAPI.getProgress().catch(() => null),
+          jinguiziAPI.getEnrollment().catch(() => null),
         ]);
         setQuote(quoteRes.data.data);
         setWallet(walletRes.data.data);
         if (cultRes?.data?.data) setCultivation(cultRes.data.data);
+        const enr = enrollRes?.data?.data?.enrollment;
+        setHasActiveEnrollment(enr?.status === 'active');
       } catch (e) {
         console.error('Dashboard fetch error:', e);
       } finally {
@@ -140,13 +144,13 @@ export default function DashboardPage() {
                 onClick={() => navigate('/trade')}
                 className="px-6 py-2.5 bg-gold text-black font-semibold rounded-lg hover:bg-gold-light transition-all duration-200"
               >
-                开始交易
+                游戏币交易
               </button>
               <button
                 onClick={() => navigate('/trade')}
                 className="px-6 py-2.5 border border-gray-700 text-gray-300 rounded-lg hover:border-gray-500 transition-all duration-200"
               >
-                查看交易行情图
+                查看行情图
               </button>
             </div>
           </div>
@@ -193,9 +197,20 @@ export default function DashboardPage() {
                 onClick={() => navigate('/trade')}
                 className="flex flex-col items-center gap-2 p-4 bg-dark-bg rounded-xl border border-gray-800 hover:border-gold/50 transition-all duration-200 group"
               >
-                <span className="text-2xl">📊</span>
-                <span className="text-sm group-hover:text-gold transition-colors">交易大厅</span>
+                <span className="text-2xl">💰</span>
+                <span className="text-sm group-hover:text-gold transition-colors">游戏币交易</span>
               </button>
+              {hasActiveEnrollment && (
+                <button
+                  onClick={() => navigate('/contest-trade')}
+                  className="flex flex-col items-center gap-2 p-4 bg-gradient-to-br from-gold/10 to-transparent rounded-xl border border-gold/40 hover:border-gold transition-all duration-200 group"
+                >
+                  <span className="text-2xl">🏆</span>
+                  <span className="text-sm font-semibold text-gold group-hover:text-yellow-300 transition-colors">
+                    选拔赛交易
+                  </span>
+                </button>
+              )}
               <button
                 onClick={() => navigate('/cultivation')}
                 className="flex flex-col items-center gap-2 p-4 bg-dark-bg rounded-xl border border-gray-800 hover:border-gold/50 transition-all duration-200 group"

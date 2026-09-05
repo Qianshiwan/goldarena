@@ -67,11 +67,17 @@ func NewJinguiziService(mem *common.MemoryStore, marketSvc *MarketService) *Jing
 // Returns (userID, nil) when found, or an error response already written.
 func (s *JinguiziService) resolveTargetUser(c *gin.Context, userID int64, username string) (int64, bool) {
 	if userID != 0 {
-		if s.mem.GetUserByID(userID) == nil {
-			common.Error(c, errs.UserNotFound, "用户不存在")
-			return 0, false
+		if u := s.mem.GetUserByID(userID); u != nil {
+			return userID, true
 		}
-		return userID, true
+		// userID 查不到时回退：可能前端把数字用户名(如"555")当成了 user_id
+		if username != "" {
+			if u := s.mem.GetUserByUsername(username); u != nil {
+				return u.ID, true
+			}
+		}
+		common.Error(c, errs.UserNotFound, "用户不存在")
+		return 0, false
 	}
 	if username != "" {
 		u := s.mem.GetUserByUsername(username)

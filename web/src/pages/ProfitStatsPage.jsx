@@ -1,8 +1,16 @@
 import { useEffect, useMemo, useState } from 'react'
-import { tradeAPI } from '../services/api'
+import { tradeAPI, jinguiziAPI } from '../services/api'
+import useAuthStore from '../stores/authStore'
 
 const fmt = (n) => (n ?? 0).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 const pct = (n) => `${(n * 100).toFixed(2)}%`
+
+// 三种模式：模拟币（游戏币）/ 选拔赛（金龟子币）/ 全部
+const MODES = [
+  { value: 'gamecoin', label: '模拟币', contestId: null },
+  { value: 'contest', label: '选拔赛', contestId: 'self' },
+  { value: 'all', label: '全部', contestId: 'all' },
+]
 
 function StatCard({ label, value, accent }) {
   const color = accent === 'up' ? 'text-green-400' : accent === 'down' ? 'text-red-400' : 'text-gray-100'
@@ -156,16 +164,20 @@ function Distribution({ wins, losses, flats, total }) {
 }
 
 export default function ProfitStatsPage() {
+  const { user } = useAuthStore()
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
+  const [mode, setMode] = useState('gamecoin') // gamecoin / contest / all
 
   useEffect(() => {
+    setLoading(true)
+    const contestId = mode === 'gamecoin' ? null : mode === 'contest' ? user?.id : 'all'
     tradeAPI
-      .getPnL()
+      .getPnL(contestId)
       .then(({ data: res }) => setData(res.data))
       .catch(() => setData({ total_pnl: 0, trades: [] }))
       .finally(() => setLoading(false))
-  }, [])
+  }, [mode, user?.id])
 
   const trades = data?.trades || []
   const stats = useMemo(() => {
@@ -183,7 +195,36 @@ export default function ProfitStatsPage() {
 
   return (
     <div className="max-w-4xl mx-auto space-y-6">
-      <h1 className="text-xl font-bold gold-gradient">盈亏统计</h1>
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <h1 className="text-xl font-bold gold-gradient">盈亏统计</h1>
+        {/* 模式切换 */}
+        <div className="flex gap-1 bg-dark-200 rounded-lg p-1 border border-gray-800">
+          {MODES.map((m) => (
+            <button
+              key={m.value}
+              onClick={() => setMode(m.value)}
+              className={`px-4 py-1.5 text-xs rounded-md transition-colors ${
+                mode === m.value
+                  ? 'bg-gold text-black font-semibold'
+                  : 'text-gray-400 hover:text-gray-200'
+              }`}
+            >
+              {m.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {mode === 'contest' && (
+        <div className="trade-card p-3 text-xs text-gray-400 border-gold/30 bg-gold/5">
+          💡 当前展示「金龟子模拟币」钱包下的平仓盈亏（不含游戏币交易）
+        </div>
+      )}
+      {mode === 'gamecoin' && (
+        <div className="trade-card p-3 text-xs text-gray-400">
+          💡 当前展示「游戏币」钱包下的平仓盈亏（不含选拔赛交易）
+        </div>
+      )}
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <StatCard label="交易笔数" value={stats.total} />

@@ -8,11 +8,12 @@ function fmt(n) {
 const statusLabel = { active: '参赛中', settled: '已结算', eliminated: '已淘汰' }
 
 // 将"目标用户"输入框解析为后端需要的 user_id 或 username
+// 纯数字同时传 user_id 和 username（因为用户名可能是 "555" 这种数字）
 function resolveTarget(raw) {
   const v = (raw || '').trim()
   if (/^\d+$/.test(v)) {
     const id = Number(v)
-    if (id > 0) return { user_id: id }
+    if (id > 0) return { user_id: id, username: v }
   }
   return { username: v }
 }
@@ -168,7 +169,7 @@ export default function AdminJinguizi() {
                 value={rechargeTarget}
                 onChange={(e) => setRechargeTarget(e.target.value)}
                 placeholder="例如 6 或 jinguizi_user"
-                className="w-full"
+                className="w-full bg-[#0F1923] text-gray-200 border border-gray-700 rounded px-3 py-2"
               />
             </div>
             <div>
@@ -180,7 +181,7 @@ export default function AdminJinguizi() {
                 value={rechargeAmount}
                 onChange={(e) => setRechargeAmount(e.target.value)}
                 placeholder="100"
-                className="w-full"
+                className="w-full bg-[#0F1923] text-gray-200 border border-gray-700 rounded px-3 py-2"
               />
             </div>
             <div>
@@ -189,7 +190,7 @@ export default function AdminJinguizi() {
                 value={rechargeRemark}
                 onChange={(e) => setRechargeRemark(e.target.value)}
                 placeholder="选拔赛报名发放"
-                className="w-full"
+                className="w-full bg-[#0F1923] text-gray-200 border border-gray-700 rounded px-3 py-2"
               />
             </div>
             <button onClick={doRecharge} className="btn-gold text-sm px-4 py-2 w-full">
@@ -208,7 +209,7 @@ export default function AdminJinguizi() {
                 value={adjustTarget}
                 onChange={(e) => setAdjustTarget(e.target.value)}
                 placeholder="例如 6 或 jinguizi_user"
-                className="w-full"
+                className="w-full bg-[#0F1923] text-gray-200 border border-gray-700 rounded px-3 py-2"
               />
             </div>
             <div>
@@ -219,7 +220,7 @@ export default function AdminJinguizi() {
                 value={adjustAmount}
                 onChange={(e) => setAdjustAmount(e.target.value)}
                 placeholder="-50"
-                className="w-full"
+                className="w-full bg-[#0F1923] text-gray-200 border border-gray-700 rounded px-3 py-2"
               />
             </div>
             <div>
@@ -228,7 +229,7 @@ export default function AdminJinguizi() {
                 value={adjustRemark}
                 onChange={(e) => setAdjustRemark(e.target.value)}
                 placeholder="参赛扣除 / 违规扣减"
-                className="w-full"
+                className="w-full bg-[#0F1923] text-gray-200 border border-gray-700 rounded px-3 py-2"
               />
             </div>
             <button
@@ -250,7 +251,7 @@ export default function AdminJinguizi() {
                 value={enrollTarget}
                 onChange={(e) => setEnrollTarget(e.target.value)}
                 placeholder="例如 6 或 jinguizi_user"
-                className="w-full"
+                className="w-full bg-[#0F1923] text-gray-200 border border-gray-700 rounded px-3 py-2"
               />
             </div>
             <div>
@@ -281,7 +282,7 @@ export default function AdminJinguizi() {
                 value={settleTarget}
                 onChange={(e) => setSettleTarget(e.target.value)}
                 placeholder="例如 6 或 jinguizi_user"
-                className="w-full"
+                className="w-full bg-[#0F1923] text-gray-200 border border-gray-700 rounded px-3 py-2"
               />
             </div>
             <div>
@@ -305,7 +306,7 @@ export default function AdminJinguizi() {
                   value={settleReward}
                   onChange={(e) => setSettleReward(e.target.value)}
                   placeholder="0"
-                  className="w-full"
+                  className="w-full bg-[#0F1923] text-gray-200 border border-gray-700 rounded px-3 py-2"
                 />
               </div>
             )}

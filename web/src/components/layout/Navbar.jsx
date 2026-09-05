@@ -1,9 +1,34 @@
 import { Link, useNavigate } from 'react-router-dom'
+import { useEffect, useState } from 'react'
 import useAuthStore from '../../stores/authStore'
+import { jinguiziAPI } from '../../services/api'
 
 export default function Navbar() {
   const { user, token, logout } = useAuthStore()
   const navigate = useNavigate()
+  const [hasActiveEnrollment, setHasActiveEnrollment] = useState(false)
+
+  useEffect(() => {
+    if (!token) {
+      setHasActiveEnrollment(false)
+      return
+    }
+    let cancelled = false
+    jinguiziAPI
+      .getEnrollment()
+      .then(({ data }) => {
+        if (!cancelled) {
+          const status = data?.data?.enrollment?.status
+          setHasActiveEnrollment(status === 'active')
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setHasActiveEnrollment(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [token])
 
   return (
     <nav className="bg-dark-300 border-b border-gray-800">
@@ -22,6 +47,17 @@ export default function Navbar() {
               <Link to="/" className="text-gray-300 hover:text-gold transition-colors text-sm">
                 交易大厅
               </Link>
+              <Link to="/trade" className="text-gray-300 hover:text-gold transition-colors text-sm">
+                游戏币交易
+              </Link>
+              {hasActiveEnrollment && (
+                <Link
+                  to="/contest-trade"
+                  className="text-gold hover:text-yellow-300 transition-colors text-sm font-semibold"
+                >
+                  🏆 选拔赛交易
+                </Link>
+              )}
               <Link to="/cultivation" className="text-gray-300 hover:text-gold transition-colors text-sm">
                 交易境界
               </Link>

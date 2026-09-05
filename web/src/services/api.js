@@ -66,14 +66,24 @@ export const marketAPI = {
 }
 
 // ========== Trade API ==========
+const nullSafe = (params) => {
+  // axios 把 null 序列化为字面字符串 "null"，先剔除空值避免污染 query
+  const out = {}
+  for (const k of Object.keys(params || {})) {
+    if (params[k] !== null && params[k] !== undefined) out[k] = params[k]
+  }
+  return out
+}
+
 export const tradeAPI = {
   placeOrder: (data) => api.post('/trade/order', data),
-  getPositions: (contestId) => api.get('/trade/positions', { params: { contest_id: contestId } }),
+  getPositions: (contestId) => api.get('/trade/positions', { params: nullSafe({ contest_id: contestId }) }),
   closePosition: (positionId) => api.post('/trade/close', { position_id: positionId }),
   cancelOrder: (orderId) => api.post('/trade/cancel', { order_id: orderId }),
-  getPendingOrders: () => api.get('/trade/pending'),
+  // contestId=null → 仅返回游戏币挂单; contestId=<id> → 仅返回该 contest 挂单
+  getPendingOrders: (contestId) => api.get('/trade/pending', { params: nullSafe({ contest_id: contestId }) }),
   updateSLTP: (positionId, data) => api.post('/trade/sltp', { position_id: positionId, ...data }),
-  getPnL: () => api.get('/trade/pnl'),
+  getPnL: (contestId) => api.get('/trade/pnl', { params: nullSafe({ contest_id: contestId }) }),
   getClosed: (params) => api.get('/trade/closed', { params }),
 }
 

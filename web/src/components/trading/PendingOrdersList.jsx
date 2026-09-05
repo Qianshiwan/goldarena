@@ -4,7 +4,7 @@ import { tradeAPI } from '../../services/api'
 const ORDER_TYPE_NAMES = { 1: '市价', 2: '限价', 3: '止损价' }
 const ORDER_STATUS_NAMES = { 1: '待成交', 2: '已成交', 3: '已撤销', 4: '已拒绝' }
 
-export default function PendingOrdersList() {
+export default function PendingOrdersList({ contestId = null }) {
   const [orders, setOrders] = useState([])
   const [loading, setLoading] = useState(true)
 
@@ -13,11 +13,11 @@ export default function PendingOrdersList() {
     // 每5秒刷新一次挂单状态
     const timer = setInterval(fetchOrders, 5000)
     return () => clearInterval(timer)
-  }, [])
+  }, [contestId])
 
   const fetchOrders = async () => {
     try {
-      const { data } = await tradeAPI.getPendingOrders()
+      const { data } = await tradeAPI.getPendingOrders(contestId)
       if (data.data) setOrders(data.data)
     } catch {}
     setLoading(false)
