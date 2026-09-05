@@ -152,8 +152,8 @@ export default function ContestCenterPage() {
           </div>
           <div>
             <span className="text-gray-300">达标奖励：</span>
-            奖励 =（档位基数 + 账户盈利率 × 档位系数）× 管理费。基数 小0 / 中1 / 大2，系数 小1 / 中2 / 大3，
-            管理费 小¥200 / 中¥1000 / 大¥2000；三档均另退 6% 管理费（¥12 / ¥60 / ¥120）。
+            奖励 =（档位基数 + 账户盈利率 × 档位系数）× 管理费。基数 小 1 / 中 1 / 大 2，系数 小 1 / 中 2 / 大 3，
+            管理费 小¥200 / 中¥1000 / 大¥2000；<span className="text-gold font-semibold">触发线: 盈利率 ≥ 20%</span>,未达标仅退 6% 管理费(¥12 / ¥60 / ¥120)。
           </div>
         </div>
       </div>

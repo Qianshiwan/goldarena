@@ -40,7 +40,6 @@ export default function AdminJinguizi() {
   // 结算 / 淘汰
   const [settleTarget, setSettleTarget] = useState('')
   const [settleAction, setSettleAction] = useState('settle')
-  const [settleReward, setSettleReward] = useState('')
 
   const loadList = async () => {
     try {
@@ -116,18 +115,22 @@ export default function AdminJinguizi() {
   const doSettle = async () => {
     setMsg('')
     if (!settleTarget.trim()) return setMsg('请填写目标用户（ID 或 用户名）')
-    const reward = parseFloat(settleReward) || 0
     try {
       const { data } = await jinguiziAPI.adminSettle({
         ...resolveTarget(settleTarget),
         action: settleAction,
-        reward,
       })
       const d = data.data
-      const verb = d.action === 'eliminate' ? '淘汰结算（收回参赛资金）' : '达标结算'
-      setMsg(`${verb}成功：用户 ${d.user_id} · 余额 ${fmt(d.balance_before)} → ${fmt(d.balance_after)}`)
+      if (d.action === 'eliminate') {
+        setMsg(`淘汰结算成功：用户 ${d.user_id} · 收回参赛资金 · 余额 ${fmt(d.balance_before)} → ${fmt(d.balance_after)}`)
+      } else {
+        const refund = fmt(d.fee_refund || 0)
+        const reward = fmt(d.reward || 0)
+        const ret = ((d.return_pct || 0) * 100).toFixed(1)
+        const triggered = d.triggered ? '✅ 达标奖励' : '⚠️ 未达触发线(仅退管理费)'
+        setMsg(`结算成功：用户 ${d.user_id} · 档位 ${d.tier} · 盈利率 ${ret}% · ${triggered}\n  · 退游戏币 ¥${refund}  奖励金龟子币 ${reward}\n  · 公式: ${d.reward_reason}`)
+      }
       setSettleTarget('')
-      setSettleReward('')
       loadList()
     } catch (e) {
       setMsg('结算失败: ' + (e.response?.data?.message || '未知错误'))
@@ -292,22 +295,17 @@ export default function AdminJinguizi() {
                 onChange={(e) => setSettleAction(e.target.value)}
                 className="w-full bg-dark-200 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-200"
               >
-                <option value="settle">达标结算（可选发放奖励）</option>
+                <option value="settle">达标结算（按公式自动算奖励 + 退 6% 管理费）</option>
                 <option value="eliminate">淘汰（收回参赛资金）</option>
               </select>
             </div>
             {settleAction === 'settle' && (
-              <div>
-                <label className="block text-xs text-gray-500 mb-1">奖励金龟子币（可选，达标时发放）</label>
-                <input
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  value={settleReward}
-                  onChange={(e) => setSettleReward(e.target.value)}
-                  placeholder="0"
-                  className="w-full bg-[#0F1923] text-gray-200 border border-gray-700 rounded px-3 py-2"
-                />
+              <div className="p-2 rounded bg-dark-200 border border-gray-700/50 text-[11px] text-gray-400 leading-relaxed">
+                <div className="font-semibold text-gray-300 mb-1">奖励公式（按档位自动计算,无需手填）</div>
+                <div>小账户(200元): <span className="font-mono text-gold">(1 + 盈利率×1) × 200</span></div>
+                <div>中账户(1000元): <span className="font-mono text-gold">(1 + 盈利率×2) × 1000</span></div>
+                <div>大账户(2000元): <span className="font-mono text-gold">(2 + 盈利率×3) × 2000</span></div>
+                <div className="mt-1 text-cyan-300">触发线: 盈利率 ≥ 20%；未达标仅退 6% 管理费,无奖励</div>
               </div>
             )}
             <button

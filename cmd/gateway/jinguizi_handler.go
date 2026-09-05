@@ -50,6 +50,60 @@ var jinguiziStageTargets = []struct {
 	{6, 0.29}, // 6月 ≥ 29% (赛期终点)
 }
 
+// jinguiziRewardCoeff defines the 选拔赛达标奖励 formula per tier:
+//   reward = (Base + ReturnPct × Coeff) × Fee,   triggered when ReturnPct >= Trigger
+// Trigger / Base / Coeff are all set so that hitting the trigger exactly gives a
+// reward equal to 1× the management fee (so the user's "minimum profitable exit"
+// is also the lowest reward tier). Higher returnPct then scales linearly per
+// tier's Coeff. 触发线 ≥ 20% applies to every tier.
+var jinguiziRewardCoeff = map[string]struct {
+	Base, Coeff, Trigger float64
+}{
+	JinguiziTierSmall:  {Base: 1, Coeff: 1, Trigger: 0.20}, // (1 + 1×r) × 200
+	JinguiziTierMedium: {Base: 1, Coeff: 2, Trigger: 0.20}, // (1 + 2×r) × 1000
+	JinguiziTierLarge:  {Base: 2, Coeff: 3, Trigger: 0.20}, // (2 + 3×r) × 2000
+}
+
+// jinguiziFeeRefundPct is the fraction of the 管理费 refunded back to the
+// participant's 游戏币 wallet on a successful settle (达标 or 未达 trigger 都退).
+const jinguiziFeeRefundPct = 0.06
+
+// jinguiziRewardResult bundles everything the settle handler needs in one call:
+// the cash portion to refund to the 游戏币 wallet, the bonus portion (if any)
+// to credit into the 金龟子 wallet, and whether the reward trigger fired.
+type jinguiziRewardResult struct {
+	FeeRefund float64 // 6% of 管理费 → 游戏币钱包
+	Reward    float64 // (Base + r*Coeff)*Fee → 金龟子钱包 (0 if 未达触发线)
+	Triggered bool    // true if ReturnPct >= Trigger (reward fired)
+	Reason    string  // human-readable summary, e.g. "达标奖励: 公式(1+25%×2)*1000=1500元"
+}
+
+// calculateJinguiziReward applies the 选拔赛 settlement formula to a tier at a
+// given cumulative returnPct. refund always equals fee × jinguiziFeeRefundPct (6%).
+// reward is only non-zero when the per-tier trigger (≥20%) is cleared.
+func calculateJinguiziReward(tier string, returnPct float64) jinguiziRewardResult {
+	fee := jinguiziTierFee[tier]
+	res := jinguiziRewardResult{
+		FeeRefund: fee * jinguiziFeeRefundPct,
+		Reason:    fmt.Sprintf("退管理费%.0f%%=¥%.0f", jinguiziFeeRefundPct*100, fee*jinguiziFeeRefundPct),
+	}
+	c, ok := jinguiziRewardCoeff[tier]
+	if !ok {
+		return res
+	}
+	if returnPct < c.Trigger {
+		res.Reason = fmt.Sprintf("退管理费%.0f%%=¥%.0f;盈利率%.1f%%未达触发线%.0f%%,无奖励",
+			jinguiziFeeRefundPct*100, res.FeeRefund, returnPct*100, c.Trigger*100)
+		return res
+	}
+	res.Reward = (c.Base + returnPct*c.Coeff) * fee
+	res.Triggered = true
+	res.Reason = fmt.Sprintf("退管理费%.0f%%=¥%.0f;达标奖励: (%.0f+%.1f%%×%d)×¥%.0f = ¥%.0f",
+		jinguiziFeeRefundPct*100, res.FeeRefund,
+		c.Base, returnPct*100, int(c.Coeff), fee, res.Reward)
+	return res
+}
+
 // JinguiziService manages the isolated 金龟子模拟币 wallet. It is intentionally
 // decoupled from the main game-coin wallet: no shared structs, tables, or
 // recharge paths. Admins recharge participants directly (manual grant); there is
@@ -398,16 +452,19 @@ func (s *JinguiziService) EnrollAfterPayment(userID int64, tier, outTradeNo stri
 }
 
 type AdminSettleJinguiziReq struct {
-	UserID   int64   `json:"user_id"`
-	Username string  `json:"username"`
-	Action   string  `json:"action"`  // settle (达标结算) / eliminate (淘汰)
-	Reward   float64 `json:"reward"`  // settle 时可发放奖励金龟子币
-	Note     string  `json:"note"`
+	UserID   int64  `json:"user_id"`
+	Username string `json:"username"`
+	Action   string `json:"action"` // settle (达标结算) / eliminate (淘汰)
+	Note     string `json:"note"`
 }
 
 // AdminSettle settles an active enrollment.
 //   - eliminate: reclaims the dedicated contest capital (floor 0) and marks eliminated.
-//   - settle:    marks settled; an optional reward is granted as contest_reward.
+//   - settle:    computes the current cumulative returnPct = (equity-initial)/initial,
+//     refunds 6% of the 管理费 to the user's 游戏币 wallet, then — if returnPct
+//     ≥ 20% (per tier) — credits the formula reward
+//     (Base + ReturnPct × Coeff) × Fee into the 金龟子 wallet.
+//     Below the trigger, only the 6% refund is granted. Marks settled either way.
 func (s *JinguiziService) AdminSettle(c *gin.Context) {
 	operatorID := c.GetInt64("user_id")
 	var req AdminSettleJinguiziReq
@@ -427,53 +484,107 @@ func (s *JinguiziService) AdminSettle(c *gin.Context) {
 		common.Error(c, errs.InvalidParam, "该用户没有进行中的参赛记录")
 		return
 	}
-	w := s.mem.EnsureJinguiziWallet(uid)
-	balanceBefore := w.Balance
 	now := time.Now()
-	var delta float64
-	var newBalance float64
+	out := gin.H{
+		"user_id":          uid,
+		"action":           req.Action,
+		"tier":             enr.Tier,
+		"enrollment_status": "",
+	}
 
 	if req.Action == "eliminate" {
+		// 淘汰: 收回参赛资金(原有逻辑,无奖励无退费)
+		jw := s.mem.EnsureJinguiziWallet(uid)
+		balanceBefore := jw.Balance
 		reclaim := enr.InitialCapital
-		newBalance = balanceBefore - reclaim
+		newBalance := balanceBefore - reclaim
 		if newBalance < 0 {
 			newBalance = 0
 		}
-		delta = newBalance - balanceBefore
-		s.mem.UpdateJinguiziBalance(uid, newBalance, w.Frozen)
+		delta := newBalance - balanceBefore
+		s.mem.UpdateJinguiziBalance(uid, newBalance, jw.Frozen)
 		s.mem.SaveJinguiziTransaction(uid, &common.JinguiziTransaction{
 			UserID: uid, OperatorID: operatorID, Type: "settlement", Amount: delta,
 			BalanceBefore: balanceBefore, BalanceAfter: newBalance,
 			Remark: "选拔赛淘汰·收回参赛资金", CreatedAt: now,
 		})
 		enr.Status = "eliminated"
-	} else { // settle
-		newBalance = balanceBefore
-		if req.Reward > 0 {
-			newBalance = balanceBefore + req.Reward
-			s.mem.UpdateJinguiziBalance(uid, newBalance, w.Frozen)
-			s.mem.AddJinguiziRecharged(uid, req.Reward)
-			s.mem.SaveJinguiziTransaction(uid, &common.JinguiziTransaction{
-				UserID: uid, OperatorID: operatorID, Type: "contest_reward", Amount: req.Reward,
-				BalanceBefore: balanceBefore, BalanceAfter: newBalance,
-				Remark: "选拔赛达标奖励", CreatedAt: now,
-			})
-		}
-		enr.Status = "settled"
+		enr.SettledAt = &now
+		s.mem.SaveJinguiziEnrollment(enr)
+		out["balance_before"] = balanceBefore
+		out["balance_after"] = newBalance
+		out["delta"] = delta
+		out["enrollment_status"] = "eliminated"
+		common.Success(c, out)
+		return
 	}
 
-	sa := now
-	enr.SettledAt = &sa
+	// === settle: 公式结算 ===
+	_, _, _, equity := s.computeJinguiziEquity(uid)
+	returnPct := 0.0
+	if enr.InitialCapital > 0 {
+		returnPct = equity/enr.InitialCapital - 1
+	}
+	res := calculateJinguiziReward(enr.Tier, returnPct)
+
+	// 1) 退 6% 管理费 → 游戏币钱包
+	if res.FeeRefund > 0 {
+		gw := s.mem.GetWallet(uid)
+		if gw == nil {
+			// 游戏币钱包不存在则用 EnsureJinguiziWallet 同款的零值初始化,
+			// 这里直接用 GetWallet 拿到的 nil 走默认 0; 实际产品上每个用户
+			// 都有游戏币钱包(注册时建), 这里只是兜底.
+			gw = &common.Wallet{UserID: uid, Balance: 0, Frozen: 0}
+		}
+		gbBefore := gw.Balance
+		gbAfter := gbBefore + res.FeeRefund
+		s.mem.UpdateWalletBalance(uid, gbAfter, gw.Frozen)
+		s.mem.SaveWalletTransaction(uid, &common.WalletTransaction{
+			UserID:        uid,
+			Type:          "contest_fee_refund",
+			Amount:        res.FeeRefund,
+			BalanceBefore: gbBefore,
+			BalanceAfter:  gbAfter,
+			Remark: fmt.Sprintf("选拔赛结算·退还%.0f%%管理费(%s)", jinguiziFeeRefundPct*100, jinguiziTierLabel[enr.Tier]),
+			CreatedAt:     now,
+		})
+		out["gamecoin_balance_before"] = gbBefore
+		out["gamecoin_balance_after"] = gbAfter
+		out["fee_refund"] = res.FeeRefund
+	}
+
+	// 2) 发放奖励 → 金龟子钱包(仅当触发)
+	jwBefore := 0.0
+	jwAfter := 0.0
+	if res.Reward > 0 {
+		jw := s.mem.EnsureJinguiziWallet(uid)
+		jwBefore = jw.Balance
+		jwAfter = jwBefore + res.Reward
+		s.mem.UpdateJinguiziBalance(uid, jwAfter, jw.Frozen)
+		s.mem.AddJinguiziRecharged(uid, res.Reward)
+		s.mem.SaveJinguiziTransaction(uid, &common.JinguiziTransaction{
+			UserID:        uid,
+			OperatorID:    operatorID,
+			Type:          "contest_reward",
+			Amount:        res.Reward,
+			BalanceBefore: jwBefore,
+			BalanceAfter:  jwAfter,
+			Remark:        fmt.Sprintf("选拔赛达标奖励(%s,盈利率%.1f%%)", jinguiziTierLabel[enr.Tier], returnPct*100),
+			CreatedAt:     now,
+		})
+	}
+	enr.Status = "settled"
+	enr.SettledAt = &now
 	s.mem.SaveJinguiziEnrollment(enr)
 
-	common.Success(c, gin.H{
-		"user_id":          uid,
-		"action":           req.Action,
-		"balance_before":   balanceBefore,
-		"balance_after":    newBalance,
-		"delta":            delta,
-		"enrollment_status": enr.Status,
-	})
+	out["return_pct"] = returnPct
+	out["reward"] = res.Reward
+	out["triggered"] = res.Triggered
+	out["reward_reason"] = res.Reason
+	out["jinguizi_balance_before"] = jwBefore
+	out["jinguizi_balance_after"] = jwAfter
+	out["enrollment_status"] = "settled"
+	common.Success(c, out)
 }
 
 // GetEnrollment returns the caller's own 选拔赛 enrollment plus a live snapshot of
