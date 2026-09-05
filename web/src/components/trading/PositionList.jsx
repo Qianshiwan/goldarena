@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { tradeAPI } from '../../services/api'
 import { wsClient } from '../../services/ws'
+import { WalletBadge } from './OrderPanel'
 
 // P&L 公式与后端 trade_handler.calculatePnL 保持一致:
 //   contractSize = 100; 多: (现价-开仓)*100*volume; 空: (开仓-现价)*100*volume
@@ -99,7 +100,10 @@ export default function PositionList({ contestId = null }) {
   return (
     <div className="trade-card">
       <div className="p-3 border-b border-gray-800 flex items-center justify-between">
-        <h3 className="text-sm font-semibold text-gray-300">持仓列表</h3>
+        <div className="flex items-center gap-2">
+          <h3 className="text-sm font-semibold text-gray-300">持仓列表</h3>
+          <WalletBadge contestId={contestId} />
+        </div>
         <div className="flex gap-4 text-xs">
           <span className="text-gray-500">
             保证金: <span className="font-mono text-gray-300">{totalMargin.toFixed(2)}</span>

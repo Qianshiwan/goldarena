@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { tradeAPI } from '../../services/api'
+import { WalletBadge } from './OrderPanel'
 
 const ORDER_TYPE_NAMES = { 1: '市价', 2: '限价', 3: '止损价' }
 const ORDER_STATUS_NAMES = { 1: '待成交', 2: '已成交', 3: '已撤销', 4: '已拒绝' }
@@ -40,7 +41,10 @@ export default function PendingOrdersList({ contestId = null }) {
   return (
     <div className="trade-card">
       <div className="p-3 border-b border-gray-800 flex items-center justify-between">
-        <h3 className="text-sm font-semibold text-gray-300">挂单列表</h3>
+        <div className="flex items-center gap-2">
+          <h3 className="text-sm font-semibold text-gray-300">挂单列表</h3>
+          <WalletBadge contestId={contestId} />
+        </div>
         <span className="text-xs text-gray-500">{orders.length} 个待成交</span>
       </div>
 

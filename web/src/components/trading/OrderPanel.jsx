@@ -10,6 +10,24 @@ const ORDER_TYPES = [
 
 // contestId=null 表示游戏币钱包（普通交易大厅）
 // contestId=<user_id> 表示金龟子币钱包（选拔赛交易）
+const isContest = (id) => id !== null && id !== undefined && id !== ''
+
+// 钱包徽章 — 在 OrderPanel / PositionList / PendingOrdersList 顶部重复使用
+export function WalletBadge({ contestId }) {
+  if (isContest(contestId)) {
+    return (
+      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold border border-gold/50 bg-gold/10 text-gold">
+        💎 金龟子币
+      </span>
+    )
+  }
+  return (
+    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold border border-cyan-500/50 bg-cyan-500/10 text-cyan-300">
+      🪙 游戏币
+    </span>
+  )
+}
+
 export default function OrderPanel({ contestId = null, disabled = false }) {
   const [volume, setVolume] = useState(0.05)
   const [leverage, setLeverage] = useState(10)
@@ -155,7 +173,10 @@ export default function OrderPanel({ contestId = null, disabled = false }) {
   return (
     <div className="trade-card p-4">
       <div className="flex items-center justify-between mb-3">
-        <h3 className="text-sm font-semibold text-gray-300">下单交易</h3>
+        <div className="flex items-center gap-2">
+          <h3 className="text-sm font-semibold text-gray-300">下单交易</h3>
+          <WalletBadge contestId={contestId} />
+        </div>
         <span className="text-xs text-gray-500">
           市价 <span className="font-mono text-gold">${livePrice ? livePrice.toFixed(2) : '—'}</span>
         </span>
@@ -166,6 +187,17 @@ export default function OrderPanel({ contestId = null, disabled = false }) {
           ⚠️ 当前模式暂不可交易。请先报名金龟子选拔赛。
         </div>
       )}
+
+      {/* 钱包使用提示 — 让用户清楚知道这一笔会走哪个钱包 */}
+      <div className={`mb-3 px-2 py-1.5 rounded text-[11px] ${
+        isContest(contestId)
+          ? 'bg-gold/10 border border-gold/30 text-gold/90'
+          : 'bg-cyan-500/10 border border-cyan-500/30 text-cyan-200'
+      }`}>
+        {isContest(contestId)
+          ? '本次开仓保证金 / 盈亏将记入金龟子币钱包，独立于游戏币结算'
+          : '本次开仓保证金 / 盈亏将记入游戏币钱包，与金龟子币完全隔离'}
+      </div>
 
       {/* 订单类型切换 */}
       <div className="mb-3">
