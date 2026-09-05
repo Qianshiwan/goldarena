@@ -239,7 +239,12 @@ export default function JinguiziWalletPage() {
               </tr>
             </thead>
             <tbody>
-              {transactions.map((t) => {
+              {transactions
+                // 兜底过滤: 达标奖励为现金(非金龟子币), 不走金龟子钱包,
+                // 采集端 AdminSettle 已不再写 contest_reward_manual 流水;
+                // 这里再过滤一次, 确保即便数据库残留历史记录也不会在此显示.
+                .filter((t) => t.type !== 'contest_reward_manual')
+                .map((t) => {
                 const manual = isManualPendingType(t.type)
                 const income = !manual && (isIncomeType(t.type) || t.amount >= 0)
                 return (
