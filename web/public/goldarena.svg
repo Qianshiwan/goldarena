@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#FFD66B"/>
+      <stop offset="0.5" stop-color="#F5B942"/>
+      <stop offset="1" stop-color="#C8881A"/>
+    </linearGradient>
+  </defs>
+  <rect x="8" y="8" width="240" height="240" rx="48" fill="url(#g)"/>
+  <circle cx="128" cy="128" r="86" fill="#0b1220" opacity="0.12"/>
+  <!-- 金龟子（龟）简形 -->
+  <g fill="#0b1220">
+    <ellipse cx="128" cy="140" rx="64" ry="52"/>
+  </g>
+  <g fill="url(#g)">
+    <circle cx="128" cy="96" r="20"/>
+    <rect x="120" y="92" width="16" height="10" rx="3"/>
+  </g>
+  <g fill="#0b1220">
+    <circle cx="128" cy="92" r="6"/>
+    <rect x="64" y="138" width="14" height="40" rx="7" transform="rotate(18 71 158)"/>
+    <rect x="178" y="138" width="14" height="40" rx="7" transform="rotate(-18 185 158)"/>
+  </g>
+  <text x="128" y="232" text-anchor="middle" font-family="PingFang SC, Microsoft YaHei, sans-serif" font-size="34" font-weight="700" fill="#0b1220">金归子</text>
+</svg>

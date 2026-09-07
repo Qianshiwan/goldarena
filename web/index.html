@@ -35,10 +35,51 @@
   <!-- 让搜索引擎在结果中以简体中文摘要呈现 -->
   <meta http-equiv="content-language" content="zh-CN" />
 
+  <!-- 结构化数据：帮助搜索引擎理解站点 -->
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "WebSite",
+    "name": "金归子",
+    "alternateName": "金龟子选拔赛",
+    "url": "https://www.kinguizi.top/",
+    "description": "金归子（kinguizi.top）是面向中文用户的现货模拟交易游戏平台，提供游戏币现货模拟交易与金龟子币选拔赛。",
+    "inLanguage": "zh-CN",
+    "potentialAction": {
+      "@type": "SearchAction",
+      "target": "https://www.kinguizi.top/",
+      "query-input": "required name=search_term_string"
+    }
+  }
+  </script>
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "Organization",
+    "name": "金归子 GoldArena",
+    "url": "https://www.kinguizi.top/",
+    "logo": "https://www.kinguizi.top/goldarena.svg",
+    "description": "现货黄金 XAU/USD 模拟交易游戏平台，举办金龟子模拟交易选拔赛。"
+  }
+  </script>
+
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet">
 </head>
 <body class="bg-dark-200 text-white">
   <div id="root"></div>
   <script type="module" src="/src/main.jsx"></script>
+
+  <!-- 爬虫可读的真实正文（无 JS 时也能看到站点介绍，利于搜索引擎收录） -->
+  <noscript>
+    <div style="max-width:900px;margin:0 auto;padding:24px;color:#e5e7eb;font-family:system-ui,sans-serif;line-height:1.8;">
+      <h1>金归子 · 现货模拟交易游戏平台（金龟子选拔赛）</h1>
+      <p>金归子（kinguizi.top）是一个面向中文用户的现货模拟交易游戏平台，采用真实伦敦金 XAU/USD 行情，玩家用虚拟游戏币体验真实交易节奏。平台提供游戏币现货模拟交易与金龟子币模拟选拔赛两大玩法，并配有行情图表、公开排行榜与社区留言功能。</p>
+      <h2>金龟子模拟交易选拔赛</h2>
+      <p>金龟子选拔赛是平台的核心晋级玩法：参赛者报名不同档位（小账户 100 万、中账户 500 万、大账户 1000 万金龟子币），在 6 个月赛期内通过模拟交易争取收益。赛制设有阶段收益门槛（1 个月≥1%、3 个月≥10%、6 个月≥29%）与回撤淘汰机制（本金回撤≥5% 或峰值回撤≥6% 即淘汰），达标后可获得固定奖金与 6% 管理费退还。选拔赛旨在训练交易员本领、提高交易水平。</p>
+      <h2>游戏币现货交易</h2>
+      <p>使用游戏币进行伦敦金现货模拟买卖，1 手 = 100 盎司，支持市价、限价、止损等多种下单方式，行情红涨绿跌，帮助初学者在无风险环境中练习交易策略与风险控制。</p>
+      <p>了解更多请访问 <a href="https://www.kinguizi.top/about.html">金归子平台介绍</a>。</p>
+    </div>
+  </noscript>
 </body>
 </html>

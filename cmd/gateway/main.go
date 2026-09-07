@@ -401,6 +401,7 @@ Sitemap: `+seoSiteURL+`/sitemap.xml
 			Score float64
 		}{
 			{"/", 1.0},
+			{"/about.html", 0.9},
 			{"/trade", 0.9},
 			{"/contest-trade", 0.9},
 			{"/contest", 0.9},
