@@ -45,9 +45,9 @@ var jinguiziStageTargets = []struct {
 	Months    int
 	ReturnPct float64
 }{
-	{1, 0.01}, // 1月 ≥ 1%
-	{3, 0.10}, // 3月 ≥ 10%
-	{6, 0.29}, // 6月 ≥ 29% (赛期终点)
+	{1, 0.10}, // 1月 ≥ 10%
+	{3, 0.50}, // 3月 ≥ 50%
+	{6, 1.00}, // 6月 ≥ 100% (赛期终点)
 }
 
 // jinguiziRewardCoeff defines the 选拔赛达标奖励 formula per tier. The bonus is a
@@ -721,7 +721,7 @@ func (s *JinguiziService) evaluateEnrollment(enr *common.JinguiziEnrollment) {
 		}
 	}
 
-	// 3) Stage-profit gates (1月1% / 3月10% / 6月29%).
+	// 3) Stage-profit gates (1月10% / 3月50% / 6月100%).
 	elapsed := now.Sub(enr.EnrolledAt)
 	for _, st := range jinguiziStageTargets {
 		if enr.StageReached >= st.Months {

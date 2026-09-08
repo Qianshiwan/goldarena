@@ -35,9 +35,9 @@ function fmt(n) {
 
 // 选拔赛阶段门槛（与后端 jinguiziStageTargets 对应）
 const stageDefs = [
-  { months: 1, pct: 0.01, label: '1月≥1%' },
-  { months: 3, pct: 0.10, label: '3月≥10%' },
-  { months: 6, pct: 0.29, label: '6月≥29%' },
+  { months: 1, pct: 0.10, label: '1月≥10%' },
+  { months: 3, pct: 0.50, label: '3月≥50%' },
+  { months: 6, pct: 1.00, label: '6月≥100%' },
 ]
 
 export default function JinguiziWalletPage() {

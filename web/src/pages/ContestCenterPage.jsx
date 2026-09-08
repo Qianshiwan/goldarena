@@ -8,9 +8,9 @@ const statusLabel = { active: '参赛中', settled: '已结算', eliminated: '�
 
 // 阶段门槛（与海报文案、后端 jinguiziStageTargets 一致）
 const stageDefs = [
-  { months: 1, pct: 0.01, label: '1月≥1%' },
-  { months: 3, pct: 0.10, label: '3月≥10%' },
-  { months: 6, pct: 0.29, label: '6月≥29%' },
+  { months: 1, pct: 0.10, label: '1月≥10%' },
+  { months: 3, pct: 0.50, label: '3月≥50%' },
+  { months: 6, pct: 1.00, label: '6月≥100%' },
 ]
 
 const fmt = (n) => (n ?? 0).toLocaleString('zh-CN', { minimumFractionDigits: 0, maximumFractionDigits: 2 })

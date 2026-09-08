@@ -1,0 +1,28 @@
+金归子 / 金龟子选拔赛 —— 搜索引擎站点验证文件放置区
+==========================================================
+
+用途：
+  百度搜索资源平台、Bing Webmaster Tools 在"站点验证"时会下发一个
+  特定文件（如 baidu_verify_XXXX.html、BingSiteAuth.xml）。
+  把这个文件原样放在本目录下（保留平台给的原始文件名与内容），
+  重新构建并部署后，即可通过以下地址被搜索引擎抓取验证：
+
+    https://www.kinguizi.top/<文件名>
+
+  后端 NoRoute 静态服务机制会自动返回该文件，无需改动任何代码。
+
+操作步骤（找金归子管理员 / AI 助手执行）：
+  1. 从百度/Bing 后台复制验证文件名与完整文件内容。
+  2. 用 Write 工具把该文件写到：
+       web/public/verify/<原文件名>
+  3. 重新构建前端：
+       cd web && rm -rf dist && <node> node_modules/vite/bin/vite.js build
+  4. 部署：把 web/dist/verify/ 下的文件 scp 到
+       /opt/goldarena/web/dist/verify/
+  5. 验证：
+       curl -s https://www.kinguizi.top/<文件名> | head
+
+注意：
+  - 文件名必须是平台下发的原始名称，不要改名。
+  - 也可用 <meta> 标签验证：把平台给的 <meta name="..." content="...">
+    发给我，我加进 web/index.html 的 <head> 后重新部署即可，无需放文件。
