@@ -68,54 +68,42 @@ var jinguiziRewardCoeff = map[string]struct {
 // NOT the participant's actual returnPct — the bonus is a fixed amount per tier.
 const jinguiziRewardConstPct = 0.20
 
-// jinguiziFeeRefundPct is the fraction of the 管理费 refunded back to the
-// participant's 游戏币 wallet on a successful settle. Both the refund and the
-// 达标奖励 have separate per-tier returnPct gates:
-//   - 退管理费触发线 returnPct >= jinguiziFeeRefundTrigger (盈利 ≥ 6%)
-//   - 达标奖励触发线 returnPct >= jinguiziRewardCoeff[tier].Trigger (盈利 ≥ 100%)
-// Falling short of the 6% gate skips the 6% refund entirely; clearing 6% but not
-// 100% grants the refund only; clearing both grants the refund + fixed bonus.
-const jinguiziFeeRefundPct = 0.06
-
-// jinguiziFeeRefundTrigger is the minimum cumulative returnPct the participant
-// must clear to qualify for the 6% 管理费 refund (separate from the bonus 100% gate).
-const jinguiziFeeRefundTrigger = 0.06
+// 【报名费=赛事管理费】规则 (2026-09-09 起): 报名费在达标结算(盈利 ≥ 100%)时
+// **全额退还**, 不达标者不退还。旧的「盈利≥6% 退 6% 管理费」两道门槛已废除,
+// 退费与达标奖励共用同一条触发线 jinguiziRewardCoeff[tier].Trigger。
+// (历史: jinguiziFeeRefundPct=0.06 / jinguiziFeeRefundTrigger=0.06 已删除)
 
 // jinguiziRewardResult bundles everything the settle handler needs in one call:
-// the cash portion to refund to the 游戏币 wallet, the bonus portion (if any)
-// to credit into the 金龟子 wallet, and which gates fired.
+// the cash portions (fee refund + bonus) to be manually granted by the admin,
+// and whether the 达标 gate fired.
 type jinguiziRewardResult struct {
-	FeeRefund          float64 // 6% of 管理费 → 游戏币钱包手动流水 (0 if returnPct < 6%)
-	Reward             float64 // (Base + 20%*Coeff)*Fee 固定奖金 → 现金人工发放(发消息通知用户) (0 if 未达 100% 触发线)
-	Triggered          bool    // true if ReturnPct >= 100% 触发线 (bonus fired)
-	FeeRefundTriggered bool    // true if ReturnPct >= 6% 退管理费触发线
-	Reason             string  // human-readable summary, e.g. "退6%(¥120)+达标5200"
+	FeeRefund float64 // 全额报名费退款 → 游戏币钱包手动流水 (0 if 未达标)
+	Reward    float64 // (Base + 20%*Coeff)*Fee 固定奖金 → 现金人工发放(发消息通知用户) (0 if 未达标)
+	Triggered bool    // true if ReturnPct >= 100% 达标线 (退费+奖励同时触发)
+	Reason    string  // human-readable summary, e.g. "全额退报名费¥2000+达标奖励5200"
 }
 
 // calculateJinguiziReward applies the 选拔赛 settlement formula to a tier at a
-// given cumulative returnPct. Two independent gates: 退管理费 (>=6%) and 达标奖励
-// (>=100%). The bonus is a FIXED amount (Base + 20% × Coeff) × Fee once cleared,
-// independent of how far past 100% the actual returnPct is.
+// given cumulative returnPct. Single gate: 达标 = returnPct >= Trigger (盈利 ≥ 100%).
+// 达标 → 全额退还报名费 + 固定奖金 (Base + 20% × Coeff) × Fee, 均为现金人工发放;
+// 未达标 → 两者皆为 0 (报名费不退还)。
 func calculateJinguiziReward(tier string, returnPct float64) jinguiziRewardResult {
 	fee := jinguiziTierFee[tier]
-	res := jinguiziRewardResult{
-		Reason: fmt.Sprintf("盈利率%.1f%%未达退管理费门槛%.0f%%,无退款无奖励", returnPct*100, jinguiziFeeRefundTrigger*100),
-	}
-	if returnPct < jinguiziFeeRefundTrigger {
-		return res
-	}
-	res.FeeRefund = fee * jinguiziFeeRefundPct
-	res.FeeRefundTriggered = true
 	c, ok := jinguiziRewardCoeff[tier]
-	if !ok || returnPct < c.Trigger {
-		res.Reason = fmt.Sprintf("退管理费%.0f%%=¥%.0f;盈利率%.1f%%未达奖励触发线%.0f%%,无奖金",
-			jinguiziFeeRefundPct*100, res.FeeRefund, returnPct*100, c.Trigger*100)
-		return res
+	trigger := 1.00
+	if ok {
+		trigger = c.Trigger
 	}
+	if !ok || returnPct < trigger {
+		return jinguiziRewardResult{
+			Reason: fmt.Sprintf("盈利率%.1f%%未达达标线%.0f%%: 不达标, 报名费不退还, 无奖金", returnPct*100, trigger*100),
+		}
+	}
+	res := jinguiziRewardResult{Triggered: true}
+	res.FeeRefund = fee // 达标: 全额退还报名费(=赛事管理费)
 	res.Reward = (c.Base + jinguiziRewardConstPct*c.Coeff) * fee
-	res.Triggered = true
-	res.Reason = fmt.Sprintf("退管理费%.0f%%=¥%.0f;达标奖励: (%.0f+%.0f%%×%d)×¥%.0f = ¥%.0f",
-		jinguiziFeeRefundPct*100, res.FeeRefund,
+	res.Reason = fmt.Sprintf("达标: 全额退还报名费¥%.0f; 达标奖励: (%.0f+%.0f%%×%d)×¥%.0f = ¥%.0f",
+		res.FeeRefund,
 		c.Base, jinguiziRewardConstPct*100, int(c.Coeff), fee, res.Reward)
 	return res
 }
@@ -477,10 +465,11 @@ type AdminSettleJinguiziReq struct {
 // AdminSettle settles an active enrollment.
 //   - eliminate: reclaims the dedicated contest capital (floor 0) and marks eliminated.
 //   - settle:    computes the current cumulative returnPct = (equity-initial)/initial,
-//     then computes the per-tier reward via calculateJinguiziReward (触发线 ≥ 100%).
-//     ⚠️ 【只入金不出金, 奖励由人工发放】结算时**不**自动入游戏币/金龟子钱包,
-//     仅写一条 manual 流水(type=contest_fee_refund_manual)记录待人工发放的 6% 管理费退款,
-//     而**达标奖励不再写金龟子钱包流水**(奖励为现金, 不是金龟子币), 改为向用户发送达标通知消息.
+//     then computes the per-tier result via calculateJinguiziReward (达标线 ≥ 100%).
+//     ⚠️ 【只入金不出金, 奖励由人工发放】结算时**不**自动入游戏币/金龟子钱包。
+//     【报名费=赛事管理费】达标时**全额退还报名费**, 不达标不退还:
+//     仅写一条 manual 流水(type=contest_fee_refund_manual)记录待人工发放的全额报名费退款,
+//     而**达标奖励不写金龟子钱包流水**(奖励为现金, 不是金龟子币), 改为向用户发送达标通知消息.
 //     Marks settled either way.
 func (s *JinguiziService) AdminSettle(c *gin.Context) {
 	operatorID := c.GetInt64("user_id")
@@ -544,14 +533,15 @@ func (s *JinguiziService) AdminSettle(c *gin.Context) {
 	}
 	res := calculateJinguiziReward(enr.Tier, returnPct)
 
-	// 1) 退 6% 管理费 → 仅记 manual 流水, 不入游戏币钱包 (平台只入金不出金, 由管理员线下发放)
+	// 1) 达标 → 全额退还报名费(=赛事管理费), 仅记 manual 流水不入游戏币钱包
+	//    (平台只入金不出金, 由管理员线下发放; 不达标则 FeeRefund=0 无此流水)
 	if res.FeeRefund > 0 {
 		gw := s.mem.GetWallet(uid)
 		if gw == nil {
 			gw = &common.Wallet{UserID: uid, Balance: 0, Frozen: 0}
 		}
 		gbCurrent := gw.Balance
-		// 平台政策: 退管理费不再自动入游戏币钱包, 仅记一条 manual_* 流水.
+		// 平台政策: 退报名费不再自动入游戏币钱包, 仅记一条 manual_* 流水.
 		// BalanceBefore == BalanceAfter == 当前余额, Amount>0 表示「待发放金额」.
 		// 管理员可在 /admin/jinguizi 按用户名查流水, 自行通知用户发放.
 		s.mem.SaveWalletTransaction(uid, &common.WalletTransaction{
@@ -560,7 +550,7 @@ func (s *JinguiziService) AdminSettle(c *gin.Context) {
 			Amount:        res.FeeRefund,
 			BalanceBefore: gbCurrent,
 			BalanceAfter:  gbCurrent,
-			Remark:        fmt.Sprintf("[待人工发放] 选拔赛结算·退还%.0f%%管理费(%s)", jinguiziFeeRefundPct*100, jinguiziTierLabel[enr.Tier]),
+			Remark:        fmt.Sprintf("[待人工发放] 选拔赛达标结算·全额退还报名费/管理费(%s)", jinguiziTierLabel[enr.Tier]),
 			CreatedAt:     now,
 		})
 		out["gamecoin_balance_before"] = gbCurrent
@@ -569,7 +559,7 @@ func (s *JinguiziService) AdminSettle(c *gin.Context) {
 		out["manual_pending_gamecoin"] = res.FeeRefund
 	}
 
-	// 2) 达标奖励 → 不再写金龟子钱包流水(奖励为现金, 由人工线下发放, 不是金龟子币),
+	// 2) 达标奖励 → 不写金龟子钱包流水(奖励为现金, 由人工线下发放, 不是金龟子币),
 	//    改为向用户发送达标通知消息。响应 manual_pending_jinguizi 保留供管理员结算面板参考.
 	jwCurrent := 0.0
 	jw := s.mem.EnsureJinguiziWallet(uid)
@@ -577,7 +567,7 @@ func (s *JinguiziService) AdminSettle(c *gin.Context) {
 	if res.Reward > 0 {
 		msgParts := []string{}
 		if res.FeeRefund > 0 {
-			msgParts = append(msgParts, fmt.Sprintf("6%%管理费退款 ¥%.0f 元", res.FeeRefund))
+			msgParts = append(msgParts, fmt.Sprintf("报名费全额退还 ¥%.0f 元", res.FeeRefund))
 		}
 		msgParts = append(msgParts, fmt.Sprintf("达标奖励 ¥%.0f 元", res.Reward))
 		msgContent := fmt.Sprintf("🎉 恭喜您通过金龟子选拔赛达标(盈利率%.1f%%)！%s，均为现金，由管理员人工发放，请留意线下联系。",

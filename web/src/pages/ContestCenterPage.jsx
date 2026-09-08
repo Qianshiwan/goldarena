@@ -153,9 +153,10 @@ export default function ContestCenterPage() {
           <div>
             <span className="text-gray-300">达标奖励：</span>
             <div className="mt-1 space-y-1">
-              <div>· 200元档(小账户100万)：盈利6%以上退回管理费；盈利100%以上，奖励：奖金为（1+20%）*200=<span className="text-gold font-semibold">240元</span>。</div>
-              <div>· 1000元档(中账户 500万)：盈利6%以上退回管理费；盈利100%以上，奖励：奖金为（1+20%*2）*1000=<span className="text-gold font-semibold">1400元</span>。</div>
-              <div>· 2000元档(大账户1000万)：盈利6%以上退回管理费；盈利100%以上，奖励：奖金为（2+20%*3）*2000=<span className="text-gold font-semibold">5200元</span>。</div>
+              <div>· 200元档(小账户100万)：盈利100%以上达标，<span className="text-gold font-semibold">全额退还报名费200元</span>；奖励：奖金为（1+20%）*200=<span className="text-gold font-semibold">240元</span>。</div>
+              <div>· 1000元档(中账户 500万)：盈利100%以上达标，<span className="text-gold font-semibold">全额退还报名费1000元</span>；奖励：奖金为（1+20%*2）*1000=<span className="text-gold font-semibold">1400元</span>。</div>
+              <div>· 2000元档(大账户1000万)：盈利100%以上达标，<span className="text-gold font-semibold">全额退还报名费2000元</span>；奖励：奖金为（2+20%*3）*2000=<span className="text-gold font-semibold">5200元</span>。</div>
+              <div className="text-gray-500">不达标者报名费不退还，也无达标奖励。</div>
             </div>
           </div>
         </div>
@@ -276,7 +277,7 @@ export default function ContestCenterPage() {
           <div className="trade-card p-6">
             <p className="text-gray-400 text-sm mb-4">
               选择参赛档位并支付报名费（管理费），支付成功后系统将自动开通参赛账户并发放对应参赛资金。
-              <strong className="text-gold ml-1">注意：比赛结束后的达标奖励和 6% 管理费退款，
+              <strong className="text-gold ml-1">注意：比赛结束后的达标奖励和全额报名费退款，
               均需由管理员按规则核算后线下人工发放，不会自动入账。</strong>
             </p>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -297,7 +298,7 @@ export default function ContestCenterPage() {
             </div>
             {payError && <p className="text-red-400 text-xs mt-3">{payError}</p>}
             <p className="text-xs text-gray-500 mt-4">
-              报名费即赛事管理费，达标结算时退还 6%（小/中/大分别退 ¥12 / ¥60 / ¥120）。
+              报名费即赛事管理费，达标结算（盈利 ≥ 100%）时全额退还（小/中/大分别 ¥200 / ¥1000 / ¥2000），不达标者不退还。
             </p>
           </div>
         </div>

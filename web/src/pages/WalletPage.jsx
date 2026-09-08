@@ -255,7 +255,7 @@ export default function WalletPage() {
                           ? 'bg-green-900/30 text-green-400'
                           : 'bg-red-900/30 text-red-400'
                       }`}>
-                        {t.type === 'contest_fee_refund_manual' ? '选拔赛退管理费·待发放' : t.type}
+                        {t.type === 'contest_fee_refund_manual' ? '选拔赛退报名费·待发放' : t.type}
                       </span>
                     </td>
                     <td className={`text-right p-3 font-mono ${

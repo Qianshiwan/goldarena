@@ -127,10 +127,10 @@ export default function AdminJinguizi() {
         const refund = fmt(d.fee_refund || 0)
         const reward = fmt(d.reward || 0)
         const ret = ((d.return_pct || 0) * 100).toFixed(1)
-        const triggered = d.triggered ? '✅ 达标奖励' : '⚠️ 未达触发线(仅退管理费)'
+        const triggered = d.triggered ? '✅ 达标(全额退报名费+奖励)' : '⚠️ 未达标(报名费不退, 无奖励)'
         setMsg(
           `结算成功：用户 ${d.user_id} · 档位 ${d.tier} · 盈利率 ${ret}% · ${triggered}\n` +
-          `  · 退管理费 ¥${refund}(已记游戏币 manual 流水, 需人工发放)\n` +
+          `  · 全额退还报名费 ¥${refund}(已记游戏币 manual 流水, 需人工发放)\n` +
           `  · 达标奖励 ¥${reward}(现金, 非金龟子币, 已发消息通知用户, 需人工线下发放)\n` +
           `  · 公式: ${d.reward_reason}\n` +
           `  · ⚠️ 平台只入金不出金, 奖励/退款均未自动入账, 请管理员按上述金额/消息线下发放。`
@@ -301,7 +301,7 @@ export default function AdminJinguizi() {
                 onChange={(e) => setSettleAction(e.target.value)}
                 className="w-full bg-dark-200 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-200"
               >
-                <option value="settle">达标结算（按公式算奖励 + 退 6% 管理费, 奖励发消息通知, 需人工发放）</option>
+                <option value="settle">达标结算（盈利≥100%: 全额退报名费 + 按公式算奖励, 奖励发消息通知, 需人工发放）</option>
                 <option value="eliminate">淘汰（收回参赛资金）</option>
               </select>
             </div>
@@ -311,10 +311,10 @@ export default function AdminJinguizi() {
                 <div>小账户(200元): <span className="font-mono text-gold">(1 + 20%×1) × 200 = 240</span></div>
                 <div>中账户(1000元): <span className="font-mono text-gold">(1 + 20%×2) × 1000 = 1400</span></div>
                 <div>大账户(2000元): <span className="font-mono text-gold">(2 + 20%×3) × 2000 = 5200</span></div>
-                <div className="mt-1 text-cyan-300">退管理费: 盈利 ≥ <span className="text-gold">6%</span> 才退 6% (¥12 / ¥60 / ¥120); 奖励: 盈利 ≥ 100% 触发,固定额</div>
+                <div className="mt-1 text-cyan-300">报名费=赛事管理费: 盈利 ≥ <span className="text-gold">100%</span> 达标, <span className="text-gold">全额退还报名费</span>(¥200 / ¥1000 / ¥2000) + 固定奖金; 不达标两者皆无</div>
                 <div className="mt-3 text-amber-300 font-semibold">
                   ⚠️ 平台政策: 只入金不出金, 奖励/退款均<strong>不自动入账</strong>。
-                  退管理费(6%)仅写入游戏币 manual 流水(type=contest_fee_refund_manual), 余额前后相等;
+                  全额退报名费仅写入游戏币 manual 流水(type=contest_fee_refund_manual), 余额前后相等;
                   达标奖励为<strong>现金</strong>(非金龟子币), 不写钱包流水, <strong>自动向用户发送达标通知消息</strong>。
                   请按金额/消息<strong>线下联系用户发放</strong>。
                 </div>
