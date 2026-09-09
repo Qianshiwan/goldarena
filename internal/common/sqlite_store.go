@@ -109,7 +109,8 @@ func migrateSQLite(db *sql.DB) error {
 			user_id INTEGER PRIMARY KEY,
 			tier TEXT, initial_capital REAL, status TEXT,
 			contest_id INTEGER, enrolled_at TEXT, settled_at TEXT, remark TEXT,
-			peak_equity REAL, stage_reached INTEGER
+			peak_equity REAL, stage_reached INTEGER,
+			eliminated_reason TEXT, eliminated_snapshot TEXT
 		)`,
 		// 应用内留言（平台与用户双向）
 		`CREATE TABLE IF NOT EXISTS ga_messages (
@@ -131,6 +132,8 @@ func migrateSQLite(db *sql.DB) error {
 	// COLUMN is a no-op if the column already exists.
 	addColumnIfMissing(db, "ga_jinguizi_enrollments", "peak_equity", "REAL")
 	addColumnIfMissing(db, "ga_jinguizi_enrollments", "stage_reached", "INTEGER")
+	addColumnIfMissing(db, "ga_jinguizi_enrollments", "eliminated_reason", "TEXT")
+	addColumnIfMissing(db, "ga_jinguizi_enrollments", "eliminated_snapshot", "TEXT")
 	// ga_payment_orders.product distinguishes game-coin recharge orders from
 	// 金龟子选拔赛缴费报名 orders ("contest_<tier>").
 	addColumnIfMissing(db, "ga_payment_orders", "product", "TEXT DEFAULT 'gamecoin'")
@@ -411,13 +414,14 @@ func (m *MemoryStore) persistJinguiziEnrollment(userID int64) {
 		settled = fmtTime(*e.SettledAt)
 	}
 	_, err := m.db.Exec(`INSERT INTO ga_jinguizi_enrollments
-		(user_id,tier,initial_capital,status,contest_id,enrolled_at,settled_at,remark,peak_equity,stage_reached)
-		VALUES (?,?,?,?,?,?,?,?,?,?)
+		(user_id,tier,initial_capital,status,contest_id,enrolled_at,settled_at,remark,peak_equity,stage_reached,eliminated_reason,eliminated_snapshot)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(user_id) DO UPDATE SET
 		tier=excluded.tier,initial_capital=excluded.initial_capital,status=excluded.status,
 		contest_id=excluded.contest_id,settled_at=excluded.settled_at,remark=excluded.remark,
-		peak_equity=excluded.peak_equity,stage_reached=excluded.stage_reached`,
-		e.UserID, e.Tier, e.InitialCapital, e.Status, e.ContestID, fmtTime(e.EnrolledAt), settled, e.Remark, e.PeakEquity, e.StageReached)
+		peak_equity=excluded.peak_equity,stage_reached=excluded.stage_reached,
+		eliminated_reason=excluded.eliminated_reason,eliminated_snapshot=excluded.eliminated_snapshot`,
+		e.UserID, e.Tier, e.InitialCapital, e.Status, e.ContestID, fmtTime(e.EnrolledAt), settled, e.Remark, e.PeakEquity, e.StageReached, e.EliminatedReason, e.EliminatedSnapshot)
 	if err != nil {
 		log.Printf("WARN persistJinguiziEnrollment(%d): %v", userID, err)
 	}
@@ -823,16 +827,16 @@ func (m *MemoryStore) LoadFromSQLite() (int, error) {
 	}
 
 	// 金龟子选拔赛报名记录
-	enrRows, err := m.db.Query(`SELECT user_id,tier,initial_capital,status,contest_id,enrolled_at,settled_at,remark,peak_equity,stage_reached FROM ga_jinguizi_enrollments`)
+	enrRows, err := m.db.Query(`SELECT user_id,tier,initial_capital,status,contest_id,enrolled_at,settled_at,remark,peak_equity,stage_reached,eliminated_reason,eliminated_snapshot FROM ga_jinguizi_enrollments`)
 	if err == nil {
 		for enrRows.Next() {
 			var e JinguiziEnrollment
-			var enrolledAt, remark string
+			var enrolledAt, remark, elimReason, elimSnap string
 			var settledAt sql.NullString
 			var contestID int64
 			var peakEquity float64
 			var stageReached int
-			if err := enrRows.Scan(&e.UserID, &e.Tier, &e.InitialCapital, &e.Status, &contestID, &enrolledAt, &settledAt, &remark, &peakEquity, &stageReached); err != nil {
+			if err := enrRows.Scan(&e.UserID, &e.Tier, &e.InitialCapital, &e.Status, &contestID, &enrolledAt, &settledAt, &remark, &peakEquity, &stageReached, &elimReason, &elimSnap); err != nil {
 				enrRows.Close()
 				return 0, err
 			}
@@ -845,6 +849,8 @@ func (m *MemoryStore) LoadFromSQLite() (int, error) {
 			e.Remark = remark
 			e.PeakEquity = peakEquity
 			e.StageReached = stageReached
+			e.EliminatedReason = elimReason
+			e.EliminatedSnapshot = elimSnap
 			m.jinguiziEnrollments[e.UserID] = &e
 		}
 		enrRows.Close()

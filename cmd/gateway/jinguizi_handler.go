@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 	"sort"
@@ -286,6 +287,8 @@ func (s *JinguiziService) AdminList(c *gin.Context) {
 			rows[len(rows)-1]["initial_capital"] = enr.InitialCapital
 			rows[len(rows)-1]["stage_reached"] = enr.StageReached
 			rows[len(rows)-1]["peak_equity"] = enr.PeakEquity
+			rows[len(rows)-1]["eliminated_reason"] = enr.EliminatedReason
+			rows[len(rows)-1]["eliminated_snapshot"] = enr.EliminatedSnapshot
 		}
 	}
 	sort.Slice(rows, func(i, j int) bool {
@@ -708,7 +711,7 @@ func (s *JinguiziService) evaluateEnrollment(enr *common.JinguiziEnrollment) {
 		principalDD = (enr.InitialCapital - equity) / enr.InitialCapital
 	}
 	if principalDD >= 0.05 {
-		s.eliminateEnrollment(enr, fmt.Sprintf("本金回撤%.1f%%≥5%%", principalDD*100))
+		s.eliminateEnrollment(enr, fmt.Sprintf("本金回撤%.1f%%≥5%%(本金%.0f→权益%.0f)", principalDD*100, enr.InitialCapital, equity), equity)
 		return
 	}
 
@@ -716,7 +719,7 @@ func (s *JinguiziService) evaluateEnrollment(enr *common.JinguiziEnrollment) {
 	if enr.PeakEquity > 0 {
 		peakDD := (enr.PeakEquity - equity) / enr.PeakEquity
 		if peakDD >= 0.06 {
-			s.eliminateEnrollment(enr, fmt.Sprintf("历史最高动态权益回撤%.1f%%≥6%%", peakDD*100))
+			s.eliminateEnrollment(enr, fmt.Sprintf("历史最高动态权益回撤%.1f%%≥6%%(峰值%.0f→权益%.0f)", peakDD*100, enr.PeakEquity, equity), equity)
 			return
 		}
 	}
@@ -735,7 +738,7 @@ func (s *JinguiziService) evaluateEnrollment(enr *common.JinguiziEnrollment) {
 			ret = equity/enr.InitialCapital - 1
 		}
 		if ret < st.ReturnPct {
-			s.eliminateEnrollment(enr, fmt.Sprintf("%d月阶段盈利未达标(需≥%.0f%%,实际%.1f%%)", st.Months, st.ReturnPct*100, ret*100))
+			s.eliminateEnrollment(enr, fmt.Sprintf("%d月阶段盈利未达标(需≥%.0f%%,实际%.1f%%)", st.Months, st.ReturnPct*100, ret*100), equity)
 			return
 		}
 		enr.StageReached = st.Months
@@ -744,12 +747,79 @@ func (s *JinguiziService) evaluateEnrollment(enr *common.JinguiziEnrollment) {
 	s.mem.SaveJinguiziEnrollment(enr)
 }
 
+// jinguiziEliminationSnapshot captures the account state at the moment of elimination,
+// so the reason + positions + PnL are preserved for post-mortem review.
+type jinguiziEliminationSnapshot struct {
+	InitialCapital float64                `json:"initial_capital"`
+	EquityAtElim   float64                `json:"equity_at_elim"`
+	Loss           float64                `json:"loss"` // initial_capital - equity (forfeited amount)
+	PeakEquity     float64                `json:"peak_equity"`
+	Reason         string                 `json:"reason"`
+	Positions      []jinguiziPositionSnap `json:"positions"`
+}
+
+type jinguiziPositionSnap struct {
+	Symbol       string  `json:"symbol"`
+	Direction    int     `json:"direction"` // 1=long, 2=short
+	Volume       float64 `json:"volume"`
+	OpenPrice    float64 `json:"open_price"`
+	CurrentPrice float64 `json:"current_price"`
+	Margin       float64 `json:"margin"`
+	FloatingPnl  float64 `json:"floating_pnl"`
+}
+
 // eliminateEnrollment reclaims all remaining 金龟子 contest funds and marks the
-// enrollment eliminated. The contest account is forfeit on elimination.
-func (s *JinguiziService) eliminateEnrollment(enr *common.JinguiziEnrollment, reason string) {
+// enrollment eliminated. The contest account is forfeit on elimination. It also
+// records a clear elimination reason and a snapshot of positions + PnL at that moment.
+func (s *JinguiziService) eliminateEnrollment(enr *common.JinguiziEnrollment, reason string, equity float64) {
 	jw := s.mem.EnsureJinguiziWallet(enr.UserID)
 	before := jw.Balance + jw.Frozen
 	now := time.Now()
+
+	// Build position + PnL snapshot (contest-scoped holdings only).
+	var snaps []jinguiziPositionSnap
+	positions := s.mem.GetPositions(enr.UserID, nil)
+	for _, p := range positions {
+		if p.Status != 1 {
+			continue
+		}
+		if enr.ContestID != 0 {
+			if p.ContestID == nil || *p.ContestID != enr.ContestID {
+				continue
+			}
+		}
+		var price float64
+		if s.marketSvc != nil {
+			if q := s.marketSvc.GetCachedQuote(p.Symbol); q != nil && q.Price > 0 {
+				price = q.Price
+			}
+		}
+		if price <= 0 {
+			price = p.CurrentPrice
+		}
+		snaps = append(snaps, jinguiziPositionSnap{
+			Symbol:       p.Symbol,
+			Direction:    p.Direction,
+			Volume:       p.Volume,
+			OpenPrice:    p.OpenPrice,
+			CurrentPrice: price,
+			Margin:       p.Margin,
+			FloatingPnl:  jinguiziPositionPnL(p, price),
+		})
+	}
+	snap := jinguiziEliminationSnapshot{
+		InitialCapital: enr.InitialCapital,
+		EquityAtElim:   equity,
+		Loss:           enr.InitialCapital - equity,
+		PeakEquity:     enr.PeakEquity,
+		Reason:         reason,
+		Positions:      snaps,
+	}
+	if b, err := json.Marshal(snap); err == nil {
+		enr.EliminatedSnapshot = string(b)
+	}
+	enr.EliminatedReason = reason
+
 	s.mem.UpdateJinguiziBalance(enr.UserID, 0, 0)
 	s.mem.SaveJinguiziTransaction(enr.UserID, &common.JinguiziTransaction{
 		UserID: enr.UserID, OperatorID: 0, Type: "settlement", Amount: -before,
@@ -760,7 +830,7 @@ func (s *JinguiziService) eliminateEnrollment(enr *common.JinguiziEnrollment, re
 	sa := now
 	enr.SettledAt = &sa
 	s.mem.SaveJinguiziEnrollment(enr)
-	log.Printf("[JINGUIZI] user=%d eliminated: %s (equity before=%.2f)", enr.UserID, reason, before)
+	log.Printf("[JINGUIZI] user=%d eliminated: %s (equity before=%.2f, positions=%d)", enr.UserID, reason, before, len(snaps))
 }
 
 // AdminJudge forces an immediate evaluation pass (admin tool / test hook).

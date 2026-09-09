@@ -7,6 +7,25 @@ function fmt(n) {
 
 const statusLabel = { active: '参赛中', settled: '已结算', eliminated: '已淘汰' }
 
+// 解析并展示被淘汰时的持仓/亏损快照（后端 eliminateEnrollment 落库的 JSON）
+function ElimSnapDetail({ snap }) {
+  let d = null
+  try { d = JSON.parse(snap) } catch { return null }
+  if (!d) return null
+  const dir = (p) => (p.direction === 1 ? '多' : p.direction === 2 ? '空' : p.direction)
+  return (
+    <div className="mt-1 text-[11px] text-gray-400 leading-snug space-y-0.5">
+      <div>淘汰时权益：<span className="text-gray-200">{fmt(d.equity_at_elim)}</span> ｜ 亏损：<span className="text-red-400">{fmt(d.loss)}</span></div>
+      <div>持仓 {(d.positions || []).length} 笔：</div>
+      {(d.positions || []).map((p, i) => (
+        <div key={i} className="font-mono">
+          {p.symbol} {dir(p)} {p.volume}手 @ {fmt(p.open_price)} → {fmt(p.current_price)} 浮盈 {fmt(p.floating_pnl)}
+        </div>
+      ))}
+    </div>
+  )
+}
+
 // 将"目标用户"输入框解析为后端需要的 user_id 或 username
 // 纯数字同时传 user_id 和 username（因为用户名可能是 "555" 这种数字）
 function resolveTarget(raw) {
@@ -374,13 +393,21 @@ export default function AdminJinguizi() {
                 <td className="p-3 text-right font-mono text-gray-300">{fmt(w.total_recharged || 0)}</td>
                 <td className="p-3">
                   {w.enrollment_status ? (
-                    <span className={`px-2 py-0.5 rounded text-xs ${
-                      w.enrollment_status === 'active' ? 'bg-green-900/30 text-green-400'
-                        : w.enrollment_status === 'settled' ? 'bg-gold/20 text-gold'
-                        : 'bg-red-900/30 text-red-400'
-                    }`}>
-                      {statusLabel[w.enrollment_status] || w.enrollment_status}
-                    </span>
+                    <div className="max-w-[260px]">
+                      <span className={`px-2 py-0.5 rounded text-xs ${
+                        w.enrollment_status === 'active' ? 'bg-green-900/30 text-green-400'
+                          : w.enrollment_status === 'settled' ? 'bg-gold/20 text-gold'
+                          : 'bg-red-900/30 text-red-400'
+                      }`}>
+                        {statusLabel[w.enrollment_status] || w.enrollment_status}
+                      </span>
+                      {w.enrollment_status === 'eliminated' && (
+                        <div className="mt-1 text-[11px] text-red-400 leading-snug">
+                          淘汰原因：{w.eliminated_reason || '—'}
+                          {w.eliminated_snapshot ? <ElimSnapDetail snap={w.eliminated_snapshot} /> : null}
+                        </div>
+                      )}
+                    </div>
                   ) : (
                     <span className="text-gray-600 text-xs">未参赛</span>
                   )}

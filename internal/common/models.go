@@ -201,6 +201,9 @@ type JinguiziEnrollment struct {
 	// ---- 实时判定字段（自动淘汰 / 阶段达标） ----
 	PeakEquity  float64 `json:"peak_equity"`  // 历史最高动态权益
 	StageReached int     `json:"stage_reached"` // 已通过的最高阶段(月)：0/1/3/6/9
+	// ---- 淘汰快照：保留淘汰原因与当时持仓/盈亏（淘汰后复盘用） ----
+	EliminatedReason   string `json:"eliminated_reason,omitempty"`   // 清晰文本原因
+	EliminatedSnapshot string `json:"eliminated_snapshot,omitempty"` // JSON: 淘汰时权益/亏损/持仓明细
 }
 
 // JinguiziTransaction records every change to a 金龟子 wallet.
