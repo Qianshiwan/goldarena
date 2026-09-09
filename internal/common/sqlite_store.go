@@ -645,7 +645,11 @@ func (m *MemoryStore) LoadFromSQLite() (int, error) {
 	defer m.dbMu.Unlock()
 
 	// Users
-	userRows, err := m.db.Query(`SELECT id,username,nickname,password_hash,email,phone,avatar,is_verified,role,status,cultivation_level,spirit_energy,created_at,updated_at FROM ga_users`)
+	// NOTE: email/phone/avatar/role/nickname/cultivation_level/spirit_energy may be
+	// NULL in legacy rows. COALESCE them so the scan into plain Go types never
+	// fails (a failed Scan previously aborted the whole load and fell back to the
+	// password-less memstore.json snapshot, corrupting PasswordHash).
+	userRows, err := m.db.Query(`SELECT id,username,COALESCE(nickname,''),password_hash,COALESCE(email,''),COALESCE(phone,''),COALESCE(avatar,''),is_verified,COALESCE(role,''),COALESCE(status,0),COALESCE(cultivation_level,0),COALESCE(spirit_energy,0),created_at,updated_at FROM ga_users`)
 	if err != nil {
 		return 0, err
 	}
@@ -668,8 +672,8 @@ func (m *MemoryStore) LoadFromSQLite() (int, error) {
 	}
 	userRows.Close()
 
-	// Wallets
-	walletRows, err := m.db.Query(`SELECT user_id,id,balance,frozen,total_recharged,version,created_at,updated_at FROM ga_wallets`)
+	// Wallets (COALESCE numeric columns that may be NULL in legacy rows)
+	walletRows, err := m.db.Query(`SELECT user_id,id,COALESCE(balance,0),COALESCE(frozen,0),COALESCE(total_recharged,0),COALESCE(version,0),created_at,updated_at FROM ga_wallets`)
 	if err != nil {
 		return 0, err
 	}
@@ -827,7 +831,10 @@ func (m *MemoryStore) LoadFromSQLite() (int, error) {
 	}
 
 	// 金龟子选拔赛报名记录
-	enrRows, err := m.db.Query(`SELECT user_id,tier,initial_capital,status,contest_id,enrolled_at,settled_at,remark,peak_equity,stage_reached,eliminated_reason,eliminated_snapshot FROM ga_jinguizi_enrollments`)
+	// eliminated_reason/eliminated_snapshot are NULL for pre-snapshot enrollments;
+	// COALESCE so the Scan into plain string fields never fails (a failed Scan
+	// aborts the whole load and triggers the password-less snapshot fallback).
+	enrRows, err := m.db.Query(`SELECT user_id,tier,initial_capital,status,contest_id,enrolled_at,settled_at,remark,peak_equity,stage_reached,COALESCE(eliminated_reason,''),COALESCE(eliminated_snapshot,'') FROM ga_jinguizi_enrollments`)
 	if err == nil {
 		for enrRows.Next() {
 			var e JinguiziEnrollment

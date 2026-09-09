@@ -110,17 +110,32 @@ func main() {
 		log.Printf("WARNING: failed to load from SQLite: %v", lerr)
 	}
 	if n == 0 {
-		// SQLite empty: backfill from legacy JSON snapshot if present
+		// SQLite empty (or load failed): backfill from legacy JSON snapshot if present.
 		memStorePath = "data/memstore.json"
 		if err := memStore.LoadSnapshot(memStorePath); err != nil {
 			log.Printf("WARNING: failed to load memory snapshot: %v", err)
 		} else {
 			log.Println("Restored legacy JSON snapshot (users/wallets/positions)")
 		}
-		if err := memStore.MigrateMemoryToSQLite(); err != nil {
-			log.Printf("WARNING: failed to migrate snapshot into SQLite: %v", err)
+		// SAFETY: the JSON snapshot never stores PasswordHash (model uses json:"-"),
+		// so migrating it back into SQLite would overwrite real password hashes with
+		// empty strings. Only migrate when the snapshot actually carries passwords;
+		// otherwise leave the durable SQLite store untouched.
+		hasPwd := false
+		for _, u := range memStore.GetAllUsers() {
+			if u != nil && u.PasswordHash != "" {
+				hasPwd = true
+				break
+			}
+		}
+		if hasPwd {
+			if err := memStore.MigrateMemoryToSQLite(); err != nil {
+				log.Printf("WARNING: failed to migrate snapshot into SQLite: %v", err)
+			} else {
+				log.Println("Migrated legacy JSON snapshot into SQLite (durable)")
+			}
 		} else {
-			log.Println("Migrated legacy JSON snapshot into SQLite (durable)")
+			log.Println("WARNING: snapshot has no password hashes; skipping SQLite migration to avoid overwriting real passwords")
 		}
 	} else {
 		log.Printf("Restored %d users from SQLite durable store", n)
