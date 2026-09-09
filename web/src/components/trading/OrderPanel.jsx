@@ -228,7 +228,7 @@ export default function OrderPanel({ contestId = null, disabled = false }) {
             type="number"
             step="0.01"
             min="0.01"
-            max="100"
+            max="10000"
             value={volume}
             onChange={(e) => setVolume(parseFloat(e.target.value) || 0.01)}
             className="w-full"

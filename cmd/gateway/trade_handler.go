@@ -165,8 +165,8 @@ func (s *TradeService) PlaceOrder(c *gin.Context) {
 		common.Error(c, errs.InvalidLeverage, "max leverage is 1000")
 		return
 	}
-	if req.Volume < 0.01 || req.Volume > 100 {
-		common.Error(c, errs.InvalidVolume, "volume must be 0.01-100")
+	if req.Volume < 0.01 || req.Volume > 10000 {
+		common.Error(c, errs.InvalidVolume, "volume must be 0.01-10000")
 		return
 	}
 	if req.Direction != 1 && req.Direction != 2 {
