@@ -146,10 +146,10 @@ export default function AdminJinguizi() {
         const refund = fmt(d.fee_refund || 0)
         const reward = fmt(d.reward || 0)
         const ret = ((d.return_pct || 0) * 100).toFixed(1)
-        const triggered = d.triggered ? '✅ 达标(全额退报名费+奖励)' : '⚠️ 未达标(报名费不退, 无奖励)'
+        const triggered = d.triggered ? '✅ 达标(全额退报名费+奖励)' : (d.fee_refund > 0 ? '✅ 盈利>10%未达最终标准(全额退管理费, 无奖励)' : '⚠️ 未达标(报名费不退, 无奖励)')
         setMsg(
           `结算成功：用户 ${d.user_id} · 档位 ${d.tier} · 盈利率 ${ret}% · ${triggered}\n` +
-          `  · 全额退还报名费 ¥${refund}(已记游戏币 manual 流水, 需人工发放)\n` +
+          `  · 退还报名费/管理费 ¥${refund}(已记游戏币 manual 流水, 需人工发放)\n` +
           `  · 达标奖励 ¥${reward}(现金, 非金龟子币, 已发消息通知用户, 需人工线下发放)\n` +
           `  · 公式: ${d.reward_reason}\n` +
           `  · ⚠️ 平台只入金不出金, 奖励/退款均未自动入账, 请管理员按上述金额/消息线下发放。`
@@ -330,7 +330,7 @@ export default function AdminJinguizi() {
                 <div>小账户(200元): <span className="font-mono text-gold">(1 + 20%×1) × 200 = 240</span></div>
                 <div>中账户(1000元): <span className="font-mono text-gold">(1 + 20%×2) × 1000 = 1400</span></div>
                 <div>大账户(2000元): <span className="font-mono text-gold">(2 + 20%×3) × 2000 = 5200</span></div>
-                <div className="mt-1 text-cyan-300">报名费=赛事管理费: 盈利 ≥ <span className="text-gold">100%</span> 达标, <span className="text-gold">全额退还报名费</span>(¥200 / ¥1000 / ¥2000) + 固定奖金; 不达标两者皆无</div>
+                <div className="mt-1 text-cyan-300">报名费=赛事管理费, 6月结算三档: 盈利 ≥ <span className="text-gold">100%</span> 达标 → <span className="text-gold">全额退报名费</span>(¥200/¥1000/¥2000) + 固定奖金; 盈利 <span className="text-gold">10%~100%</span> → 仅<span className="text-gold">全额退管理费</span>(无奖励); 盈利 ≤ 10% 两者皆无</div>
                 <div className="mt-3 text-amber-300 font-semibold">
                   ⚠️ 平台政策: 只入金不出金, 奖励/退款均<strong>不自动入账</strong>。
                   全额退报名费仅写入游戏币 manual 流水(type=contest_fee_refund_manual), 余额前后相等;

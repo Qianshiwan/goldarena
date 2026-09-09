@@ -153,10 +153,10 @@ export default function ContestCenterPage() {
           <div>
             <span className="text-gray-300">达标奖励：</span>
             <div className="mt-1 space-y-1">
-              <div>· 200元档(小账户100万)：盈利100%以上达标，<span className="text-gold font-semibold">全额退还报名费200元</span>；奖励：奖金为（1+20%）*200=<span className="text-gold font-semibold">240元</span>。</div>
-              <div>· 1000元档(中账户 500万)：盈利100%以上达标，<span className="text-gold font-semibold">全额退还报名费1000元</span>；奖励：奖金为（1+20%*2）*1000=<span className="text-gold font-semibold">1400元</span>。</div>
-              <div>· 2000元档(大账户1000万)：盈利100%以上达标，<span className="text-gold font-semibold">全额退还报名费2000元</span>；奖励：奖金为（2+20%*3）*2000=<span className="text-gold font-semibold">5200元</span>。</div>
-              <div className="text-gray-500">不达标者报名费不退还，也无达标奖励。</div>
+              <div>· 200元档(小账户100万)：盈利≥100%达标，<span className="text-gold font-semibold">全额退还报名费200元</span>；奖励：奖金为（1+20%）*200=<span className="text-gold font-semibold">240元</span>。</div>
+              <div>· 1000元档(中账户 500万)：盈利≥100%达标，<span className="text-gold font-semibold">全额退还报名费1000元</span>；奖励：奖金为（1+20%*2）*1000=<span className="text-gold font-semibold">1400元</span>。</div>
+              <div>· 2000元档(大账户1000万)：盈利≥100%达标，<span className="text-gold font-semibold">全额退还报名费2000元</span>；奖励：奖金为（2+20%*3）*2000=<span className="text-gold font-semibold">5200元</span>。</div>
+              <div className="text-gray-500">6月结算三档：盈利≥100% 退报名费+奖励；盈利10%~100% 仅全额退管理费（无奖励）；盈利≤10% 不退费、无奖励。</div>
             </div>
           </div>
         </div>
@@ -298,7 +298,7 @@ export default function ContestCenterPage() {
             </div>
             {payError && <p className="text-red-400 text-xs mt-3">{payError}</p>}
             <p className="text-xs text-gray-500 mt-4">
-              报名费即赛事管理费，达标结算（盈利 ≥ 100%）时全额退还（小/中/大分别 ¥200 / ¥1000 / ¥2000），不达标者不退还。
+              报名费即赛事管理费，6月结算分三档：盈利 ≥ 100% 时全额退还报名费（¥200/¥1000/¥2000）+ 固定奖金；盈利 10%~100% 仅全额退还管理费、无奖励；盈利 ≤ 10% 不退还、无奖励。
             </p>
           </div>
         </div>
